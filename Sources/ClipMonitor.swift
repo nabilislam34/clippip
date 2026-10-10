@@ -16,12 +16,19 @@ private struct PollResponse: Decodable {
     let text: String?
     let kind: String?
     let id: Int?
+    let paused: Bool?
+}
+
+private struct ReceiveReply: Decodable {
+    let enabled: Bool
 }
 
 final class ClipMonitor: ObservableObject {
     @Published var history: [Clip] = []
     @Published var pcStatus = "PC link: not connected"
     @Published var toast = ""
+    /// The PC side switch: while paused the PC does not read, store or send its copies.
+    @Published var pcPaused = false
     @Published var server: String { didSet { UserDefaults.standard.set(server, forKey: "server") } }
     @Published var token: String { didSet { UserDefaults.standard.set(token, forKey: "token") } }
     @Published var autoCopy: Bool { didSet { UserDefaults.standard.set(autoCopy, forKey: "autoCopy") } }
@@ -232,7 +239,9 @@ final class ClipMonitor: ObservableObject {
                 } else if let h = resp as? HTTPURLResponse, h.statusCode != 200 {
                     self.setPCStatus("PC link: HTTP \(h.statusCode) (restart the PC server?)")
                 } else if let data = data, let r = try? JSONDecoder().decode(PollResponse.self, from: data) {
-                    self.setPCStatus("PC link: connected")
+                    let paused = r.paused ?? false
+                    if self.pcPaused != paused { self.pcPaused = paused }
+                    self.setPCStatus(paused ? "PC link: connected, PC clips are switched off" : "PC link: connected")
                     self.pcSeq = r.seq
                     if r.changed { self.received(r) }
                 } else {
@@ -294,6 +303,20 @@ final class ClipMonitor: ObservableObject {
             let ok = (resp as? HTTPURLResponse)?.statusCode == 200
             DispatchQueue.main.async { done(ok, message) }
         }.resume()
+    }
+
+    /// Switch PC clips on or off on the PC side. `mode` is "1", "0" or "toggle".
+    func setPCReceive(_ mode: String) {
+        fetch("/pc/receive?on=\(mode)") { [weak self] data, resp, _ in
+            guard let self = self else { return }
+            if let data = data, resp?.statusCode == 200,
+               let r = try? JSONDecoder().decode(ReceiveReply.self, from: data) {
+                self.pcPaused = !r.enabled
+                self.flash(r.enabled ? "PC clips ON" : "PC clips OFF")
+            } else {
+                self.flash("PC server did not answer")
+            }
+        }
     }
 
     /// Hands the server URL and token to the ClipPiP keyboard through the clipboard (the keyboard picks it up

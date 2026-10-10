@@ -23,6 +23,7 @@ struct LibItem: Decodable, Identifiable {
     let tags: [String]?
     let url: String?
     let sig: String?
+    let src: String?        // PC app a clip came from (pc clips only)
     let img: String?
     let thumb: String?
     var id: String { key }
@@ -150,6 +151,13 @@ final class LibraryModel: ObservableObject {
         }
     }
 
+    /// Stop taking PC copies from the app this clip came from.
+    func blockSource(of item: LibItem) {
+        monitor?.post("/lib/block", json: ["key": item.key]) { [weak self] ok, _ in
+            self?.monitor?.flash(ok ? "Blocked \(item.src ?? "that app")" : "Could not block that source")
+        }
+    }
+
     private func scheduleSearch() {
         pending?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.reload() }
@@ -201,6 +209,8 @@ struct ClipMenu: ViewModifier {
     let onOpen: () -> Void
     var onRename: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    var blockLabel: String = ""
+    var onBlock: (() -> Void)? = nil
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -217,6 +227,9 @@ struct ClipMenu: ViewModifier {
         Button(action: onOpen) { Label("Open full clip", systemImage: "doc.text.magnifyingglass") }
         if let onRename = onRename {
             Button(action: onRename) { Label("Rename", systemImage: "pencil") }
+        }
+        if let onBlock = onBlock {
+            Button(action: onBlock) { Label(blockLabel, systemImage: "nosign") }
         }
         if let onDelete = onDelete {
             Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
@@ -257,6 +270,8 @@ struct ClipRow: View {
     let onOpen: () -> Void
     var onRename: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    var blockLabel: String = ""
+    var onBlock: (() -> Void)? = nil
 
     var body: some View {
         Button(action: onCopy) {
@@ -288,7 +303,7 @@ struct ClipRow: View {
         }
         .buttonStyle(.plain)
         .modifier(ClipMenu(text: text, image: isImage ? full : nil, onCopy: onCopy, onOpen: onOpen,
-                           onRename: onRename, onDelete: onDelete))
+                           onRename: onRename, onDelete: onDelete, blockLabel: blockLabel, onBlock: onBlock))
     }
 }
 
@@ -470,6 +485,8 @@ struct LibraryView: View {
                                            image: isImage ? full : nil, copy: copy)
                        },
                        onRename: { renaming = item },
-                       onDelete: { ask = DeleteAsk(item: item, force: false) })
+                       onDelete: { ask = DeleteAsk(item: item, force: false) },
+                       blockLabel: "Block clips from \(item.src ?? "")",
+                       onBlock: (item.src ?? "").isEmpty ? nil : { lib.blockSource(of: item) })
     }
 }

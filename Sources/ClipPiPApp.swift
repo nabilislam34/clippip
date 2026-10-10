@@ -15,8 +15,12 @@ struct ClipPiPApp: App {
                 .onAppear { pip.prepare(); monitor.start() }
                 .onOpenURL { url in
                     // clippip://start  or  clippip://stop
+                    // clippip://pc-on, clippip://pc-off, clippip://pc-toggle  (PC clips switch)
                     if url.host == "start" { pip.requestStart() }
                     else if url.host == "stop" { pip.stop() }
+                    else if url.host == "pc-on" { monitor.setPCReceive("1") }
+                    else if url.host == "pc-off" { monitor.setPCReceive("0") }
+                    else if url.host == "pc-toggle" { monitor.setPCReceive("toggle") }
                 }
                 .onChange(of: phase) { p in
                     if p == .background { pip.startIfNeeded() }
@@ -111,6 +115,11 @@ struct ContentView: View {
                         .autocapitalization(.none).disableAutocorrection(true)
                     Toggle("Put PC copies on this phone's clipboard", isOn: $monitor.autoCopy)
                     Toggle("Tapping a clip also puts it on the PC clipboard", isOn: $monitor.activateOnPC)
+                    Button(monitor.pcPaused ? "PC clips are OFF: turn on" : "PC clips are ON: turn off") {
+                        monitor.setPCReceive("toggle")
+                    }
+                    .foregroundColor(monitor.pcPaused ? .red : .accentColor)
+                    .disabled(monitor.server.isEmpty)
                 }
                 Section(footer: Text("Add the keyboard in Settings > General > Keyboard > Keyboards > Add New Keyboard > ClipPiP, turn on Allow Full Access, tap this button, then open the keyboard once.")) {
                     Button("Link the ClipPiP keyboard") { monitor.linkKeyboard() }
