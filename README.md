@@ -1,6 +1,6 @@
 # ClipPiP
 
-iOS clipboard monitor that stays in the background with Picture-in-Picture and shares every copy you make to a server on your PC.
+iOS to windows clipboard monitor that stays in the background with Picture-in-Picture and shares every copy you make to a server on your PC.Everything is local between your devicesso no security/privacy concerns
 
 
 <img width="550" height="1024" alt="image" src="https://github.com/user-attachments/assets/57090030-df87-403c-826c-3bc3c609c0c7" />
