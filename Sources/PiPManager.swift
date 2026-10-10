@@ -31,6 +31,16 @@ final class PiPManager: NSObject, ObservableObject, AVPictureInPictureController
                 self.playerLayer.player = q
                 self.playerLayer.videoGravity = .resizeAspect
                 q.play()
+                // A paused video lets iOS suspend the app, which silently stops the sync: resume it while PiP is up.
+                q.publisher(for: \.timeControlStatus)
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self, weak q] state in
+                        guard let self = self, state == .paused, self.pipActive,
+                              Date().timeIntervalSince(self.lastResume) > 1 else { return }
+                        self.lastResume = Date()
+                        q?.play()
+                    }
+                    .store(in: &self.bag)
 
                 guard AVPictureInPictureController.isPictureInPictureSupported(),
                       let c = AVPictureInPictureController(playerLayer: self.playerLayer) else {
@@ -56,6 +66,7 @@ final class PiPManager: NSObject, ObservableObject, AVPictureInPictureController
 
     static let shared = PiPManager()
     private var pendingStart = false
+    private var lastResume = Date.distantPast
 
     /// Used by the URL scheme and the Shortcuts action: starts PiP now, or as soon as it is ready.
     func requestStart() {

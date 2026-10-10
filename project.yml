@@ -12,6 +12,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
+        CFBundleShortVersionString: "1.1"
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         CFBundleURLTypes:
