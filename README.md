@@ -1,17 +1,16 @@
 # ClipPiP
 
-iOS to windows clipboard monitor that stays in the background with Picture-in-Picture and shares every copy you make to a server on your PC.Everything is local between your devices so no security/privacy concerns
+Seamless iOS to windows clipboard sync that stays in the background with Picture-in-Picture and shares every copy you make to a server on your PC. Everything is local between your devices so no security/privacy concerns
 
 
 <img width="550" height="1024" alt="image" src="https://github.com/user-attachments/assets/57090030-df87-403c-826c-3bc3c609c0c7" />
 
 
-- Phone to PC: every copy on the phone is POSTed to a server on your PC (text and images).
+- Phone to PC: every copy on the phone is sent to a server on your PC (text and images). Images clips can be stored on your laptop to save on phone storage.
 - PC to phone: the app polls the server once a second and puts new PC copies (text and images)
-  straight on the phone clipboard. This can be switched off in the Clips tab.
+  instantly on the phone clipboard. This can be switched off in the Clips tab. 
 - The clip list survives app restarts. Images are never stored on the phone, they are loaded from the PC.
-- Library tab: browse and search clips that live on the PC (the clip history database and any
-  clipboard-manager tabs the server exposes), with vertical tabs. Tap copies, long press previews.
+- Library tab: browse and search clips that live on the PC (the app's clip history database and any PC clipboard manager you use with groups/tab features), with vertical tabs, tap copies, long press previews.
 
 ## Build
 GitHub Actions builds an unsigned `ClipPiP.ipa` (Actions tab > build-ios > Artifacts).
