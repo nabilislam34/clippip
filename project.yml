@@ -1,0 +1,28 @@
+name: ClipPiP
+options:
+  bundleIdPrefix: com.clippip
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  ClipPiP:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: ClipPiP
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.clippip.app
+            CFBundleURLSchemes: [clippip]
+        NSLocalNetworkUsageDescription: Sends copied clips to your PC on the local network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clippip.app
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_ALLOWED: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
