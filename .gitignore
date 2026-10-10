@@ -3,5 +3,6 @@ build/
 Payload/
 *.ipa
 Sources/Info.plist
+Keyboard/Info.plist
 .DS_Store
 backup/

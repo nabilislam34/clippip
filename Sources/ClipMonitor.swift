@@ -25,6 +25,7 @@ final class ClipMonitor: ObservableObject {
     @Published var server: String { didSet { UserDefaults.standard.set(server, forKey: "server") } }
     @Published var token: String { didSet { UserDefaults.standard.set(token, forKey: "token") } }
     @Published var autoCopy: Bool { didSet { UserDefaults.standard.set(autoCopy, forKey: "autoCopy") } }
+    @Published var activateOnPC: Bool { didSet { UserDefaults.standard.set(activateOnPC, forKey: "activateOnPC") } }
 
     private var timer: Timer?
     private var pollTimer: Timer?
@@ -45,6 +46,7 @@ final class ClipMonitor: ObservableObject {
         server = UserDefaults.standard.string(forKey: "server") ?? ""
         token = UserDefaults.standard.string(forKey: "token") ?? ""
         autoCopy = UserDefaults.standard.object(forKey: "autoCopy") as? Bool ?? true
+        activateOnPC = UserDefaults.standard.object(forKey: "activateOnPC") as? Bool ?? true
         if let data = try? Data(contentsOf: Self.historyURL),
            let saved = try? JSONDecoder().decode([Clip].self, from: data) {
             history = saved
@@ -102,12 +104,21 @@ final class ClipMonitor: ObservableObject {
         }
     }
 
-    /// Copy a history item to the phone clipboard.
+    /// Copy a history item to the phone clipboard, and put it on the PC clipboard too.
     func recopy(_ clip: Clip) {
         if clip.kind == "image", let id = clip.serverId {
             copyImage(path: "/clip/file?id=\(id)")
         } else {
             copyText(clip.text)
+        }
+        if let id = clip.serverId { activate(key: "h\(id)", sig: "") }
+    }
+
+    /// A tapped clip also becomes the PC clipboard. The PC already has the clip, so only its key is sent.
+    func activate(key: String, sig: String) {
+        guard activateOnPC else { return }
+        post("/lib/activate", json: ["key": key, "sig": sig]) { [weak self] ok, _ in
+            if !ok { self?.flash("Copied on the phone only (PC did not take it)") }
         }
     }
 
@@ -124,20 +135,53 @@ final class ClipMonitor: ObservableObject {
         let pb = UIPasteboard.general
         guard pb.changeCount != lastChange else { return }
         lastChange = pb.changeCount
+        let types = pb.types.joined(separator: ",")
         if pb.hasStrings, let s = pb.string, !s.isEmpty {
-            let link = pb.hasURLs ? pb.url?.absoluteString : nil
             let body = "text=" + Self.encode(s)
-            send(Data(body.utf8), type: "application/x-www-form-urlencoded", label: s, kind: "text", link: link)
+            send(Data(body.utf8), type: "application/x-www-form-urlencoded", label: s, kind: "text",
+                 link: Self.sourceURL(pb), types: types)
         } else if pb.hasImages, let img = pb.image, let png = img.pngData() {
-            send(png, type: "image/png", label: "[image \(png.count / 1024) KB]", kind: "image", link: nil)
+            send(png, type: "image/png", label: "[image \(png.count / 1024) KB]", kind: "image",
+                 link: Self.sourceURL(pb), types: types)
         }
+    }
+
+    /// Where a copy came from. iOS never says which app copied, but a copy made in a browser carries
+    /// the page inside a web archive, and a copied link or web image carries its own URL.
+    private static func sourceURL(_ pb: UIPasteboard) -> String? {
+        for type in ["com.apple.webarchive", "Apple Web Archive pasteboard type"] {
+            guard let data = pb.data(forPasteboardType: type) else { continue }
+            let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+            if let root = plist as? [String: Any],
+               let main = root["WebMainResource"] as? [String: Any],
+               let url = main["WebResourceURL"] as? String,
+               !url.isEmpty, !url.hasPrefix("about:") {
+                return url
+            }
+        }
+        if let data = pb.data(forPasteboardType: "public.html"),
+           let html = String(data: data.prefix(200_000), encoding: .utf8),
+           let start = html.range(of: "<!--source-url:"),
+           let end = html.range(of: "-->", range: start.upperBound..<html.endIndex) {
+            let url = String(html[start.upperBound..<end.lowerBound])
+            if !url.isEmpty { return url }
+        }
+        if pb.hasURLs, let url = pb.url?.absoluteString { return url }
+        return nil
+    }
+
+    /// Header values must be plain ASCII.
+    private static func headerSafe(_ s: String, max: Int) -> String? {
+        let allowed = CharacterSet(charactersIn: "!"..."~")
+        guard let out = s.addingPercentEncoding(withAllowedCharacters: allowed), !out.isEmpty else { return nil }
+        return String(out.prefix(max))
     }
 
     private static func encode(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
     }
 
-    private func send(_ body: Data, type: String, label: String, kind: String, link: String?) {
+    private func send(_ body: Data, type: String, label: String, kind: String, link: String?, types: String) {
         guard let url = serverURL("/set") else {
             record(label, "set the server URL first", fromPC: false, kind: kind); return
         }
@@ -145,8 +189,11 @@ final class ClipMonitor: ObservableObject {
         req.httpMethod = "POST"
         req.setValue(type, forHTTPHeaderField: "Content-Type")
         req.setValue(UIDevice.current.model, forHTTPHeaderField: "X-Device")
-        if let link = link, link.count < 2000, link.canBeConverted(to: .ascii) {
-            req.setValue(link, forHTTPHeaderField: "X-Clip-Url")
+        if let link = link, let safe = Self.headerSafe(link, max: 2000) {
+            req.setValue(safe, forHTTPHeaderField: "X-Clip-Url")
+        }
+        if let safe = Self.headerSafe(types, max: 900) {
+            req.setValue(safe, forHTTPHeaderField: "X-Clip-Types")
         }
         req.httpBody = body
         var bg = UIBackgroundTaskIdentifier.invalid
@@ -216,6 +263,49 @@ final class ClipMonitor: ObservableObject {
         history.insert(Clip(text: String(text.prefix(50000)), date: Date(), note: note, fromPC: fromPC,
                             kind: kind, serverId: serverId), at: 0)
         if history.count > Self.maxHistory { history.removeLast(history.count - Self.maxHistory) }
+        persist()
+    }
+
+    /// Remove a clip from the phone's list. Its copy on the PC is only hidden there, never erased.
+    func remove(_ clip: Clip) {
+        history.removeAll { $0.id == clip.id }
+        persist()
+        if let id = clip.serverId {
+            post("/lib/delete", json: ["key": "h\(id)", "sig": ""]) { _, _ in }
+        }
+    }
+
+    /// POST JSON to the server; the completion (success, server message) runs on the main thread.
+    func post(_ path: String, json: [String: Any], done: @escaping (Bool, String) -> Void) {
+        guard let url = serverURL(path), let body = try? JSONSerialization.data(withJSONObject: json) else {
+            done(false, "no server"); return
+        }
+        var req = URLRequest(url: url, timeoutInterval: 60)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        session.dataTask(with: req) { data, resp, err in
+            var message = err?.localizedDescription ?? ""
+            if let data = data,
+               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let e = obj["error"] as? String {
+                message = e
+            }
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+            DispatchQueue.main.async { done(ok, message) }
+        }.resume()
+    }
+
+    /// Hands the server URL and token to the ClipPiP keyboard through the clipboard (the keyboard picks it up
+    /// the next time it opens). Not sent to the PC.
+    func linkKeyboard() {
+        let setup: [String: String] = ["server": server, "token": token]
+        guard let data = try? JSONSerialization.data(withJSONObject: setup) else { return }
+        copyText("clippip-setup:" + data.base64EncodedString(), quiet: true)
+        flash("Now open the ClipPiP keyboard once")
+    }
+
+    private func persist() {
         let snapshot = history
         saveQueue.async {
             if let data = try? JSONEncoder().encode(snapshot) {

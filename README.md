@@ -11,7 +11,12 @@ iOS to windows clipboard monitor that stays in the background with Picture-in-Pi
   straight on the phone clipboard. This can be switched off in the Clips tab.
 - The clip list survives app restarts. Images are never stored on the phone, they are loaded from the PC.
 - Library tab: browse and search clips that live on the PC (the clip history database and any
-  clipboard-manager tabs the server exposes), with vertical tabs. Tap copies, long press previews.
+  clipboard-manager tabs the server exposes), with vertical tabs. Tap copies (on the phone and on the PC),
+  long press previews, renames or deletes. Search matches text, names and tags; the tag button filters by tag.
+- Phone copies made in a browser are stored with the page they came from.
+- ClipPiP keyboard: a custom keyboard whose keys search your PC clips; tapping a result types it into
+  the app you are in. Add it in Settings > General > Keyboard > Keyboards, turn on Allow Full Access,
+  then tap "Link the ClipPiP keyboard" in the app and open the keyboard once.
 
 ## Build
 GitHub Actions builds an unsigned `ClipPiP.ipa` (Actions tab > build-ios > Artifacts).
@@ -29,12 +34,17 @@ Shortcut URLs: `clippip://start`, `clippip://stop`.
 All requests carry `?token=<token>`.
 
 - `POST /set` with `Content-Type: application/x-www-form-urlencoded`, body `text=<percent-encoded>`,
-  or `Content-Type: image/png` with the raw PNG bytes. Optional headers `X-Device`, `X-Clip-Url`.
+  or `Content-Type: image/png` with the raw PNG bytes. Optional headers `X-Device`, `X-Clip-Url`
+  (source page), `X-Clip-Types` (clipboard data types).
   HTTP 200 = sent; the optional response header `X-Clip-Id` is the stored clip's id.
 - `GET /poll?seq=<n>` returns `{"seq": n, "changed": bool, "kind": "text"|"image", "text": "...", "id": n}`.
   Send `seq=-1` first to get the current number without any clip.
 - `GET /clip/file?id=<n>` and `GET /clip/thumb?id=<n>` return a stored clip (image) and its thumbnail.
 - `GET /lib/tabs` returns `{"tabs": [{"id": "...", "label": "..."}]}`.
-- `GET /lib/items?tab=<id>&q=<search>&offset=<n>&limit=<n>` returns
-  `{"total": n, "items": [{"key", "kind", "text", "note", "url", "img"?, "thumb"?}]}`;
+- `GET /lib/items?tab=<id>&q=<search>&tag=<tag>&kind=<text|image>&offset=<n>&limit=<n>` returns
+  `{"total": n, "items": [{"key", "kind", "text", "name", "note", "tags", "url", "sig", "img"?, "thumb"?}]}`;
   `img` and `thumb` are server paths.
+- `GET /lib/tags?tab=<id>` returns `{"tags": [{"tag", "count"}]}`.
+- `POST /lib/rename` `{"key", "sig", "name"}`, `POST /lib/delete` `{"key", "sig", "force"}`,
+  `POST /lib/activate` `{"key", "sig"}` (put that clip on the PC clipboard). HTTP 409 carries
+  `{"error": "pinned" | "changed"}`.
