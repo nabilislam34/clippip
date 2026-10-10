@@ -34,7 +34,8 @@ struct TogglePCClipsIntent: AppIntent {
             let (data, _) = try await URLSession.shared.data(from: url)
             let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             if let enabled = obj?["enabled"] as? Bool {
-                return .result(dialog: enabled ? "PC clips ON" : "PC clips OFF")
+                let dialog: IntentDialog = enabled ? "PC clips ON" : "PC clips OFF"
+                return .result(dialog: dialog)
             }
             return .result(dialog: "The PC server gave an unexpected answer")
         } catch {
