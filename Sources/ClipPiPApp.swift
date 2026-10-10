@@ -83,6 +83,16 @@ struct RootView: View {
 struct ContentView: View {
     @EnvironmentObject var monitor: ClipMonitor
     @State private var open: OpenClip?
+    @State private var filter = ""
+
+    private var shown: [Clip] {
+        let words = filter.lowercased().split(separator: " ")
+        guard !words.isEmpty else { return monitor.history }
+        return monitor.history.filter { c in
+            let hay = (c.text + " " + c.note).lowercased()
+            return words.allSatisfy { hay.contains($0) }
+        }
+    }
 
     private static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     private static let stamp: DateFormatter = {
@@ -100,10 +110,17 @@ struct ContentView: View {
                     TextField("token", text: $monitor.token)
                         .autocapitalization(.none).disableAutocorrection(true)
                     Toggle("Put PC copies on this phone's clipboard", isOn: $monitor.autoCopy)
+                    Toggle("Tapping a clip also puts it on the PC clipboard", isOn: $monitor.activateOnPC)
                 }
-                Section(header: Text("Clips (tap to copy, hold to preview)"),
+                Section(footer: Text("Add the keyboard in Settings > General > Keyboard > Keyboards > Add New Keyboard > ClipPiP, turn on Allow Full Access, tap this button, then open the keyboard once.")) {
+                    Button("Link the ClipPiP keyboard") { monitor.linkKeyboard() }
+                        .disabled(monitor.server.isEmpty)
+                }
+                Section(header: Text("Clips (tap to copy, hold for more)"),
                         footer: Text("\(monitor.pcStatus)\nClipPiP \(Self.version)")) {
-                    ForEach(monitor.history) { c in
+                    TextField("Search these clips", text: $filter)
+                        .autocapitalization(.none).disableAutocorrection(true)
+                    ForEach(shown) { c in
                         row(c)
                     }
                 }
@@ -127,6 +144,7 @@ struct ContentView: View {
                        onOpen: {
                            open = OpenClip(id: c.id.uuidString, text: c.text, note: note, link: "",
                                            image: full, copy: { monitor.recopy(c) })
-                       })
+                       },
+                       onDelete: { monitor.remove(c) })
     }
 }
