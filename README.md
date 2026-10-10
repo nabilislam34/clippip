@@ -1,6 +1,10 @@
 # ClipPiP
 
-iOS clipboard sync that keeps itself alive in the background with Picture-in-Picture.
+iOS to windows clipboard monitor that stays in the background with Picture-in-Picture and shares every copy you make to a server on your PC.Everything is local between your devices so no security/privacy concerns
+
+
+<img width="550" height="1024" alt="image" src="https://github.com/user-attachments/assets/57090030-df87-403c-826c-3bc3c609c0c7" />
+
 
 - Phone to PC: every copy on the phone is POSTed to a server on your PC (text and images).
 - PC to phone: the app polls the server once a second and puts new PC copies (text and images)
