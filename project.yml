@@ -14,7 +14,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.2"
+        CFBundleShortVersionString: "1.3"
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         CFBundleURLTypes:
@@ -38,7 +38,7 @@ targets:
       path: Keyboard/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.2"
+        CFBundleShortVersionString: "1.3"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSExtension:
