@@ -18,6 +18,7 @@ targets:
           - CFBundleURLName: com.clippip.app
             CFBundleURLSchemes: [clippip]
         NSLocalNetworkUsageDescription: Sends copied clips to your PC on the local network.
+        NSBonjourServices: ["_http._tcp"]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
     settings:
