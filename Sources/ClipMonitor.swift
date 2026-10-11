@@ -62,7 +62,7 @@ final class ClipMonitor: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
-        let t = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in self?.tick() }
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
         let p = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.poll() }
@@ -222,9 +222,12 @@ final class ClipMonitor: ObservableObject {
     // MARK: PC -> phone
 
     private func poll() {
-        guard !polling, let url = serverURL("/poll?seq=\(pcSeq)") else { return }
+        // wait=6: the server holds the request until the PC clipboard changes (long poll), so a PC copy
+        // arrives in about 50 ms instead of waiting for the next 1 s tick. An older server ignores it.
+        guard !polling, let url = serverURL("/poll?seq=\(pcSeq)&wait=6") else { return }
         polling = true
-        var req = URLRequest(url: url, timeoutInterval: 10)
+        let startedAt = Date()
+        var req = URLRequest(url: url, timeoutInterval: 15)
         req.httpMethod = "GET"
         var bg = UIBackgroundTaskIdentifier.invalid
         bg = UIApplication.shared.beginBackgroundTask { UIApplication.shared.endBackgroundTask(bg) }
@@ -244,6 +247,10 @@ final class ClipMonitor: ObservableObject {
                     self.setPCStatus(paused ? "PC link: connected, PC clips are switched off" : "PC link: connected")
                     self.pcSeq = r.seq
                     if r.changed { self.received(r) }
+                    // answered after a real wait or with a clip: ask again at once so nothing sits for a tick
+                    if r.changed || Date().timeIntervalSince(startedAt) > 1.0 {
+                        DispatchQueue.main.async { self.poll() }
+                    }
                 } else {
                     self.setPCStatus("PC link: bad reply (restart the PC server?)")
                 }
