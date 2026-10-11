@@ -28,4 +28,13 @@ jobs:
       - run: brew install xcodegen
       - run: xcodegen generate
       - name: Keyboard layout and clip origin tests (simulator)
-        run: xcodebuild test -project ClipPiP.xcodeproj -scheme ClipPiPKeyboardTests -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO
+        run: |
+          # The runner image does not always list an 'iPhone 16': take any iPhone simulator, or make one.
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next((x['udid'] for k in sorted(d, reverse=True) if 'iOS' in k for x in d[k] if 'iPhone' in x['name']), ''))")
+          if [ -z "$UDID" ]; then
+            RUNTIME=$(xcrun simctl list runtimes -j | python3 -c "import json,sys; r=[x['identifier'] for x in json.load(sys.stdin)['runtimes'] if x.get('isAvailable') and 'iOS' in x['identifier']]; print(sorted(r)[-1] if r else '')")
+            if [ -z "$RUNTIME" ]; then echo 'no iOS simulator runtime on this runner'; xcrun simctl list runtimes; exit 1; fi
+            UDID=$(xcrun simctl create ci-iphone 'iPhone 16' "$RUNTIME")
+          fi
+          echo "simulator $UDID"
+          xcodebuild test -project ClipPiP.xcodeproj -scheme ClipPiPKeyboardTests -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO
