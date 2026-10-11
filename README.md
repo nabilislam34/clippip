@@ -14,6 +14,8 @@ Seamless iOS to windows clipboard sync that stays in the background with Picture
 - Tapping a clip also puts it on the PC clipboard. Long press to rename or delete a clip. Search matches
   text, names and tags, and the tag button filters by tag.
 - Phone copies made in a browser are stored with the page they came from.
+- Each phone clip shows the app it was copied in, and the Library gets a `from <app>` tab per app
+  (`from reddit` holds Reddit app copies and copies from reddit pages in a browser). See "Which app a clip came from".
 - ClipPiP keyboard: a custom keyboard whose keys search your PC clips; tapping a result types it into
   the app you are in. Add it in Settings > General > Keyboard > Keyboards, turn on Allow Full Access,
   then tap "Link the ClipPiP keyboard" in the app and open the keyboard once.
@@ -30,12 +32,27 @@ Install it with Sideloadly (free Apple ID re-signs every 7 days).
 
 Shortcut URLs: `clippip://start`, `clippip://stop`.
 
+## Which app a clip came from
+iOS does not tell an app where a copy was made, so ClipPiP combines three hints and the server keeps the best:
+
+1. What iOS itself recorded as the copying app. This is read through private fields that may not be
+   available on your iOS version; when they are not, nothing is sent and the next hints are used.
+2. Shortcuts automations (iOS 16+). For each app you care about, make two automations in
+   Shortcuts > Automation > New Automation > App:
+   - choose the app, tick only "Is Opened", "Run Immediately", action ClipPiP > "Set Current App", type the app's name;
+   - choose the app, tick only "Is Closed", "Run Immediately", action ClipPiP > "Clear Current App", same name.
+   Copies made while that app is open are labeled with the name you typed.
+3. The clip itself: a copied page fragment or link names its site, and some apps leave a recognizable
+   clipboard format (a Reddit share link, a Shortcuts result, a Reminders note).
+
 ## Server contract
 All requests carry `?token=<token>`.
 
 - `POST /set` with `Content-Type: application/x-www-form-urlencoded`, body `text=<percent-encoded>`,
   or `Content-Type: image/png` with the raw PNG bytes. Optional headers `X-Device`, `X-Clip-Url`
-  (source page), `X-Clip-Types` (clipboard data types).
+  (source page), `X-Clip-Types` (clipboard data types), and the percent-encoded source hints `X-Clip-Origin`
+  (bundle id iOS recorded), `X-Clip-Origin-Name`, `X-Clip-App` (app reported by a Shortcuts automation),
+  `X-Clip-Hosts` (comma separated sites inside a copied page fragment).
   HTTP 200 = sent; the optional response header `X-Clip-Id` is the stored clip's id.
 - `GET /poll?seq=<n>` returns `{"seq": n, "changed": bool, "kind": "text"|"image", "text": "...", "id": n}`.
   Send `seq=-1` first to get the current number without any clip.

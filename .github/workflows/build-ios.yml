@@ -2,7 +2,7 @@ name: build-ios
 on:
   workflow_dispatch:
   push:
-    branches: [main, local-ai-organizer]
+    branches: [main, local-ai-organizer, clip-source-app]
 jobs:
   build:
     runs-on: macos-15
@@ -27,5 +27,5 @@ jobs:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
       - run: xcodegen generate
-      - name: Keyboard layout test (simulator)
+      - name: Keyboard layout and clip origin tests (simulator)
         run: xcodebuild test -project ClipPiP.xcodeproj -scheme ClipPiPKeyboardTests -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO

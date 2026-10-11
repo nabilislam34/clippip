@@ -58,6 +58,9 @@ final class ClipMonitor: ObservableObject {
            let saved = try? JSONDecoder().decode([Clip].self, from: data) {
             history = saved
         }
+        // Coming back to ClipPiP itself means the app a Shortcuts automation reported is no longer in front.
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil,
+                                               queue: .main) { _ in ClipOrigin.clearCurrentApp("") }
     }
 
     func start() {
@@ -143,13 +146,14 @@ final class ClipMonitor: ObservableObject {
         guard pb.changeCount != lastChange else { return }
         lastChange = pb.changeCount
         let types = pb.types.joined(separator: ",")
+        let hints = ClipOrigin.headers(for: pb)
         if pb.hasStrings, let s = pb.string, !s.isEmpty {
             let body = "text=" + Self.encode(s)
             send(Data(body.utf8), type: "application/x-www-form-urlencoded", label: s, kind: "text",
-                 link: Self.sourceURL(pb), types: types)
+                 link: Self.sourceURL(pb), types: types, hints: hints)
         } else if pb.hasImages, let img = pb.image, let png = img.pngData() {
             send(png, type: "image/png", label: "[image \(png.count / 1024) KB]", kind: "image",
-                 link: Self.sourceURL(pb), types: types)
+                 link: Self.sourceURL(pb), types: types, hints: hints)
         }
     }
 
@@ -188,7 +192,8 @@ final class ClipMonitor: ObservableObject {
         s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
     }
 
-    private func send(_ body: Data, type: String, label: String, kind: String, link: String?, types: String) {
+    private func send(_ body: Data, type: String, label: String, kind: String, link: String?, types: String,
+                      hints: [String: String]) {
         guard let url = serverURL("/set") else {
             record(label, "set the server URL first", fromPC: false, kind: kind); return
         }
@@ -201,6 +206,12 @@ final class ClipMonitor: ObservableObject {
         }
         if let safe = Self.headerSafe(types, max: 900) {
             req.setValue(safe, forHTTPHeaderField: "X-Clip-Types")
+        }
+        // Which app the copy was made in, see ClipOrigin.
+        for (name, value) in hints {
+            if let safe = Self.headerSafe(value, max: name == "X-Clip-Probe" ? 2500 : 400) {
+                req.setValue(safe, forHTTPHeaderField: name)
+            }
         }
         req.httpBody = body
         var bg = UIBackgroundTaskIdentifier.invalid
