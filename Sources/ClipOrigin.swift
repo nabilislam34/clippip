@@ -62,7 +62,9 @@ enum ClipOrigin {
     static let busyKey = "originLookupBusy2"
     static let offKey = "originLookupOff2"
     /// The description is sent with the first few clips of a launch, so one lost request does not lose it.
-    private static var probesLeft = 3
+    static var probesLeft = 3
+    /// A lookup slower than this turns the lookup off: it runs on the main thread with every copy.
+    static let slowLimit: TimeInterval = 1.0
     private static let generalName = "com.apple.UIKit.pboard.general"
 
     /// The clipboard's item collection (PBItemCollection), asked from the system clipboard service the
@@ -154,7 +156,10 @@ enum ClipOrigin {
 
         var targets: [NSObject] = [pb]
         let board = pb.name.rawValue.isEmpty ? generalName : pb.name.rawValue
+        let began = Date()
         if let found = collection(named: board) { targets.append(found) }
+        let took = Date().timeIntervalSince(began)
+        if took > slowLimit { defaults.set(true, forKey: offKey) }
         var bundle: String?
         var name: String?
         for target in targets {
@@ -167,6 +172,7 @@ enum ClipOrigin {
             probesLeft -= 1
             var parts = ["ios=" + UIDevice.current.systemVersion,
                          "conn=" + (NSClassFromString("PBServerConnection") == nil ? "missing" : "ok"),
+                         "board=" + board, "ms=" + String(Int(took * 1000)),
                          "pb=" + NSStringFromClass(object_getClass(pb) ?? UIPasteboard.self),
                          "found=" + (bundle ?? "-") + "/" + (name ?? "-"),
                          "m=" + names(of: object_getClass(pb)).joined(separator: ",")]
