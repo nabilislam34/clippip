@@ -58,11 +58,28 @@ enum ClipOrigin {
 
     // MARK: 1. what iOS recorded (private)
 
-    static let busyKey = "originProbeBusy"
-    static let offKey = "originProbeOff"
-    private static var probeSent = false
-    private static let collectionGetters = ["_itemCollection", "itemCollection", "_cachedItemCollection",
-                                            "_currentItemCollection"]
+    // New key names in 1.7: an "off" left behind by the old lookup must not switch this one off.
+    static let busyKey = "originLookupBusy2"
+    static let offKey = "originLookupOff2"
+    /// The description is sent with the first few clips of a launch, so one lost request does not lose it.
+    static var probesLeft = 3
+    /// A lookup slower than this turns the lookup off: it runs on the main thread with every copy.
+    static let slowLimit: TimeInterval = 1.0
+    private static let generalName = "com.apple.UIKit.pboard.general"
+
+    /// The clipboard's item collection (PBItemCollection), asked from the system clipboard service the
+    /// way UIKit does it itself. UIPasteboard keeps no reference to it, so it cannot be read off `pb`.
+    private static func collection(named name: String) -> NSObject? {
+        guard let cls = NSClassFromString("PBServerConnection"),
+              let meta = cls as AnyObject as? NSObjectProtocol else { return nil }
+        let make = NSSelectorFromString("defaultConnection")
+        guard meta.responds(to: make),
+              let connection = meta.perform(make)?.takeUnretainedValue() as? NSObject else { return nil }
+        let ask = NSSelectorFromString("pasteboardWithName:error:")
+        guard connection.responds(to: ask) else { return nil }
+        return connection.perform(ask, with: name as NSString, with: nil)?.takeUnretainedValue() as? NSObject
+    }
+
     private static let bundleGetters = ["originatorBundleID", "_originatorBundleID", "originatorBundleIdentifier"]
     private static let nameGetters = ["originatorLocalizedName", "_originatorLocalizedName", "originatorName"]
     private static let probeWords = ["origin", "collection", "bundle", "source", "owner", "remote", "metadata"]
@@ -126,8 +143,8 @@ enum ClipOrigin {
             defaults.set(false, forKey: busyKey)
         }
         if defaults.bool(forKey: offKey) {
-            let note: String? = probeSent ? nil : "off: stopped inside the origin lookup last time"
-            probeSent = true
+            let note: String? = probesLeft > 0 ? "off: stopped inside the origin lookup last time" : nil
+            probesLeft -= 1
             return (nil, nil, note)
         }
         defaults.set(true, forKey: busyKey)
@@ -138,9 +155,11 @@ enum ClipOrigin {
         }
 
         var targets: [NSObject] = [pb]
-        for getter in collectionGetters {
-            if let collection = object(pb, getter) { targets.append(collection); break }
-        }
+        let board = pb.name.rawValue.isEmpty ? generalName : pb.name.rawValue
+        let began = Date()
+        if let found = collection(named: board) { targets.append(found) }
+        let took = Date().timeIntervalSince(began)
+        if took > slowLimit { defaults.set(true, forKey: offKey) }
         var bundle: String?
         var name: String?
         for target in targets {
@@ -149,9 +168,11 @@ enum ClipOrigin {
         }
 
         var probe: String?
-        if !probeSent {
-            probeSent = true
+        if probesLeft > 0 {
+            probesLeft -= 1
             var parts = ["ios=" + UIDevice.current.systemVersion,
+                         "conn=" + (NSClassFromString("PBServerConnection") == nil ? "missing" : "ok"),
+                         "board=" + board, "ms=" + String(Int(took * 1000)),
                          "pb=" + NSStringFromClass(object_getClass(pb) ?? UIPasteboard.self),
                          "found=" + (bundle ?? "-") + "/" + (name ?? "-"),
                          "m=" + names(of: object_getClass(pb)).joined(separator: ",")]
