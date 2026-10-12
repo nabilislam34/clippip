@@ -323,6 +323,28 @@ final class ClipMonitor: ObservableObject {
         }.resume()
     }
 
+    /// Like post(), but hands back the decoded JSON body: the transform sheet needs the result.
+    func postJSON(_ path: String, json: [String: Any],
+                  done: @escaping (Bool, [String: Any]?, String) -> Void) {
+        guard let url = serverURL(path), let body = try? JSONSerialization.data(withJSONObject: json) else {
+            done(false, nil, "no server"); return
+        }
+        var req = URLRequest(url: url, timeoutInterval: 30)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        session.dataTask(with: req) { data, resp, err in
+            var message = err?.localizedDescription ?? ""
+            var obj: [String: Any]?
+            if let data = data {
+                obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                if let e = obj?["error"] as? String { message = e }
+            }
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+            DispatchQueue.main.async { done(ok, obj, message) }
+        }.resume()
+    }
+
     /// Switch PC clips on or off on the PC side. `mode` is "1", "0" or "toggle".
     func setPCReceive(_ mode: String) {
         fetch("/pc/receive?on=\(mode)") { [weak self] data, resp, _ in
