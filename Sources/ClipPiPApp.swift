@@ -88,6 +88,7 @@ struct ContentView: View {
     @EnvironmentObject var monitor: ClipMonitor
     @State private var open: OpenClip?
     @State private var filter = ""
+    @State private var editing: EditedText?
 
     private var shown: [Clip] {
         let words = filter.lowercased().split(separator: " ")
@@ -139,6 +140,7 @@ struct ContentView: View {
         }
         .navigationViewStyle(.stack)
         .sheet(item: $open) { FullClipSheet(clip: $0) }
+        .sheet(item: $editing) { TransformSheet(text: $0.text, monitor: monitor).environmentObject(monitor) }
     }
 
     private func row(_ c: Clip) -> some View {
@@ -154,6 +156,13 @@ struct ContentView: View {
                            open = OpenClip(id: c.id.uuidString, text: c.text, note: note, link: "",
                                            image: full, copy: { monitor.recopy(c) })
                        },
-                       onDelete: { monitor.remove(c) })
+                       onDelete: { monitor.remove(c) },
+                       onTransform: isImage ? nil : { editing = EditedText(text: c.text) })
     }
+}
+
+/// A clip opened in the transform sheet. Identifiable so .sheet(item:) can drive it.
+struct EditedText: Identifiable {
+    let id = UUID()
+    let text: String
 }
