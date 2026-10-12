@@ -14,7 +14,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.6"
+        CFBundleShortVersionString: "1.7"
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         CFBundleURLTypes:
@@ -38,7 +38,7 @@ targets:
       path: Keyboard/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.6"
+        CFBundleShortVersionString: "1.7"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSExtension:
@@ -62,6 +62,7 @@ targets:
       - Tests
       - path: Sources/ClipOrigin.swift
       - path: Sources/PromptSelection.swift
+      - path: Sources/Pins.swift
       - path: Keyboard
         excludes: ["Info.plist"]
     settings:
