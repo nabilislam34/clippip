@@ -153,8 +153,8 @@ enum ClipOrigin {
         }
 
         var targets: [NSObject] = [pb]
-        let name = pb.name.rawValue.isEmpty ? generalName : pb.name.rawValue
-        if let found = collection(named: name) { targets.append(found) }
+        let board = pb.name.rawValue.isEmpty ? generalName : pb.name.rawValue
+        if let found = collection(named: board) { targets.append(found) }
         var bundle: String?
         var name: String?
         for target in targets {
