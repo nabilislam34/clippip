@@ -2,7 +2,7 @@ name: build-ios
 on:
   workflow_dispatch:
   push:
-    branches: [main, local-ai-organizer, clip-source-app]
+    branches: [main, local-ai-organizer, clip-source-app, clip-transform-sheet]
 jobs:
   build:
     runs-on: macos-15
