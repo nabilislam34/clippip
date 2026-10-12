@@ -89,6 +89,7 @@ struct ContentView: View {
     @State private var open: OpenClip?
     @State private var filter = ""
     @State private var editing: EditedText?
+    @ObservedObject private var pins = PinStore.shared
 
     private var shown: [Clip] {
         let words = filter.lowercased().split(separator: " ")
@@ -126,6 +127,13 @@ struct ContentView: View {
                     Button("Link the ClipPiP keyboard") { monitor.linkKeyboard() }
                         .disabled(monitor.server.isEmpty)
                 }
+                if !pins.pins.isEmpty {
+                    Section(header: Text("Pinned (hold to unpin)")) {
+                        ForEach(pins.pins) { p in
+                            pinRow(p)
+                        }
+                    }
+                }
                 Section(header: Text("Clips (tap to copy, hold for more)"),
                         footer: Text("\(monitor.pcStatus)\nClipPiP \(Self.version)")) {
                     TextField("Search these clips", text: $filter)
@@ -157,7 +165,43 @@ struct ContentView: View {
                                            image: full, copy: { monitor.recopy(c) })
                        },
                        onDelete: { monitor.remove(c) },
-                       onTransform: isImage ? nil : { editing = EditedText(text: c.text) })
+                       onTransform: isImage ? nil : { editing = EditedText(text: c.text) },
+                       pinned: pins.isPinned(pinId(c)),
+                       onPin: {
+                           pins.toggle(Pin(id: pinId(c), kind: isImage ? "image" : "text", text: c.text, name: "",
+                                           img: isImage ? "/clip/file?id=\(c.serverId ?? 0)" : nil,
+                                           thumb: isImage ? "/clip/thumb?id=\(c.serverId ?? 0)" : nil))
+                       })
+    }
+
+    private func pinId(_ c: Clip) -> String {
+        c.serverId.map { "h\($0)" } ?? PinStore.textId(c.text)
+    }
+
+    /// A pinned clip: tap copies it (and puts it on the PC clipboard, like any other clip), hold to unpin.
+    private func pinRow(_ p: Pin) -> some View {
+        let isImage = p.kind == "image" && p.img != nil
+        let full = isImage ? p.img.flatMap { monitor.serverURL($0) } : nil
+        let thumb = isImage ? (p.thumb ?? p.img).flatMap { monitor.serverURL($0) } : nil
+        let copy: () -> Void = {
+            if isImage, let path = p.img {
+                monitor.copyImage(path: path)
+                if p.id.hasPrefix("h") { monitor.activate(key: p.id, sig: "") }
+            } else {
+                monitor.copyText(p.text)
+                if monitor.activateOnPC {
+                    monitor.post("/clip/push", json: ["text": p.text, "copy": true, "save": false]) { _, _ in }
+                }
+            }
+        }
+        return ClipRow(text: p.text, name: p.name, note: "", thumb: thumb, full: full, isImage: isImage,
+                       onCopy: copy,
+                       onOpen: {
+                           open = OpenClip(id: "pin-" + p.id, text: p.text, note: "", link: "", image: full, copy: copy)
+                       },
+                       onTransform: isImage ? nil : { editing = EditedText(text: p.text) },
+                       pinned: true,
+                       onPin: { pins.unpin(p.id) })
     }
 }
 

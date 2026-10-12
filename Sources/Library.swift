@@ -262,6 +262,8 @@ struct ClipMenu: ViewModifier {
     var blockLabel: String = ""
     var onBlock: (() -> Void)? = nil
     var onTransform: (() -> Void)? = nil
+    var pinned: Bool = false
+    var onPin: (() -> Void)? = nil
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -276,6 +278,9 @@ struct ClipMenu: ViewModifier {
     private var actions: some View {
         Button(action: onCopy) { Label("Copy", systemImage: "doc.on.doc") }
         Button(action: onOpen) { Label("Open full clip", systemImage: "doc.text.magnifyingglass") }
+        if let onPin = onPin {
+            Button(action: onPin) { Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") }
+        }
         if let onTransform = onTransform {
             Button(action: onTransform) { Label("Edit prompt", systemImage: "wand.and.stars") }
         }
@@ -327,12 +332,17 @@ struct ClipRow: View {
     var blockLabel: String = ""
     var onBlock: (() -> Void)? = nil
     var onTransform: (() -> Void)? = nil
+    var pinned: Bool = false
+    var onPin: (() -> Void)? = nil
 
     var body: some View {
         Button(action: onCopy) {
             VStack(alignment: .leading, spacing: 3) {
                 if !name.isEmpty {
                     Text(name).font(.subheadline).fontWeight(.semibold).lineLimit(1)
+                }
+                if pinned {
+                    Label("Pinned", systemImage: "pin.fill").font(.caption2).foregroundColor(.orange)
                 }
                 if isImage {
                     AsyncImage(url: thumb) { img in
@@ -359,7 +369,7 @@ struct ClipRow: View {
         .buttonStyle(.plain)
         .modifier(ClipMenu(text: text, image: isImage ? full : nil, onCopy: onCopy, onOpen: onOpen,
                            onRename: onRename, onDelete: onDelete, blockLabel: blockLabel, onBlock: onBlock,
-                           onTransform: onTransform))
+                           onTransform: onTransform, pinned: pinned, onPin: onPin))
     }
 }
 
@@ -441,6 +451,7 @@ struct RenameSheet: View {
 struct LibraryView: View {
     @EnvironmentObject var monitor: ClipMonitor
     @StateObject private var lib = LibraryModel()
+    @ObservedObject private var pins = PinStore.shared
     @State private var open: OpenClip?
     @State private var renaming: LibItem?
     @State private var ask: DeleteAsk?
@@ -562,6 +573,11 @@ struct LibraryView: View {
                        onDelete: { ask = DeleteAsk(item: item, force: false) },
                        blockLabel: "Block clips from \(item.src ?? "")",
                        onBlock: (item.src ?? "").isEmpty ? nil : { lib.blockSource(of: item) },
-                       onTransform: isImage ? nil : { editing = EditedText(text: item.text) })
+                       onTransform: isImage ? nil : { editing = EditedText(text: item.text) },
+                       pinned: pins.isPinned(item.key),
+                       onPin: {
+                           pins.toggle(Pin(id: item.key, kind: item.kind, text: item.text, name: item.name ?? "",
+                                           img: item.img, thumb: item.thumb ?? item.img))
+                       })
     }
 }

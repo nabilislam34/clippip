@@ -77,6 +77,16 @@ final class ClipOriginTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: ClipOrigin.offKey))
     }
 
+    /// The real lookup against the simulator's clipboard service: the copy was made by this test process,
+    /// so iOS must name it. The printed line shows in the CI log what the phone will send.
+    func testOriginOfTheGeneralClipboardNamesTheCopyingApp() {
+        UIPasteboard.general.string = "clip origin general test"
+        let found = ClipOrigin.origin(UIPasteboard.general, defaults: defaults)
+        print("ORIGIN-RESULT bundle=\(found.bundle ?? "nil") name=\(found.name ?? "nil") probe=\(found.probe ?? "nil")")
+        XCTAssertFalse(defaults.bool(forKey: ClipOrigin.busyKey), "busy flag was left set")
+        XCTAssertNotNil(found.bundle, "iOS did not say which app made the copy")
+    }
+
     func testOriginLookupTurnsItselfOffAfterACrash() {
         defaults.set(true, forKey: ClipOrigin.busyKey)                 // as if the app died inside the lookup
         let pb = UIPasteboard.withUniqueName()
