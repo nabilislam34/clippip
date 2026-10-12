@@ -54,7 +54,8 @@ enum TransformFavourites {
         var c = counts(store)
         c[id, default: 0] += 1
         if c.count > trimAt {
-            c = Dictionary(uniqueKeysWithValues: c.sorted { $0.value > $1.value }.prefix(keep))
+            let kept = c.sorted { $0.value > $1.value }.prefix(keep).map { ($0.key, $0.value) }
+            c = Dictionary(uniqueKeysWithValues: kept)
         }
         store.set(c, forKey: key)
     }
