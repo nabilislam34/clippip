@@ -90,6 +90,7 @@ struct ContentView: View {
     @State private var filter = ""
     @State private var editing: EditedText?
     @ObservedObject private var pins = PinStore.shared
+    @FocusState private var searchFocused: Bool
 
     private var shown: [Clip] {
         let words = filter.lowercased().split(separator: " ")
@@ -138,6 +139,7 @@ struct ContentView: View {
                         footer: Text("\(monitor.pcStatus)\nClipPiP \(Self.version)")) {
                     TextField("Search these clips", text: $filter)
                         .autocapitalization(.none).disableAutocorrection(true)
+                        .focused($searchFocused)
                     ForEach(shown) { c in
                         row(c)
                     }
@@ -149,6 +151,12 @@ struct ContentView: View {
         .navigationViewStyle(.stack)
         .sheet(item: $open) { FullClipSheet(clip: $0) }
         .sheet(item: $editing) { TransformSheet(text: $0.text, monitor: monitor).environmentObject(monitor) }
+        .onAppear {
+            // the keyboard launch check in CI starts the app with this argument to bring a keyboard up
+            if ProcessInfo.processInfo.arguments.contains("-focusSearch") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { searchFocused = true }
+            }
+        }
     }
 
     private func row(_ c: Clip) -> some View {

@@ -38,3 +38,38 @@ jobs:
           fi
           echo "simulator $UDID"
           xcodebuild test -project ClipPiP.xcodeproj -scheme ClipPiPKeyboardTests -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO
+  keyboard-launch:
+    # Installs the real app in a simulator, turns the ClipPiP keyboard on, opens a text field and
+    # keeps a screenshot plus the keyboard process's log and crash reports.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Launch the keyboard extension for real
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next((x['udid'] for k in sorted(d, reverse=True) if 'iOS' in k for x in d[k] if 'iPhone' in x['name']), ''))")
+          echo "simulator $UDID"; xcrun simctl list devices available | grep "$UDID" || true
+          xcodebuild -project ClipPiP.xcodeproj -scheme ClipPiP -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath sim CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build | tail -3
+          mkdir -p out
+          xcrun simctl boot "$UDID"; xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" sim/Build/Products/Debug-iphonesimulator/ClipPiP.app
+          xcrun simctl spawn "$UDID" defaults write -g AppleKeyboards -array com.clippip.app.keyboard "en_US@sw=QWERTY;hw=Automatic"
+          xcrun simctl spawn "$UDID" defaults write -g AppleKeyboardsExpanded -int 1
+          xcrun simctl shutdown "$UDID"; xcrun simctl boot "$UDID"; xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl spawn "$UDID" pluginkit -m -v -p com.apple.keyboard-service > out/pluginkit.txt 2>&1 || true
+          cat out/pluginkit.txt
+          xcrun simctl spawn "$UDID" defaults read -g AppleKeyboards || true
+          xcrun simctl launch "$UDID" com.clippip.app -focusSearch
+          sleep 25
+          xcrun simctl io "$UDID" screenshot out/keyboard.png
+          xcrun simctl spawn "$UDID" log show --last 3m --style compact --predicate 'process == "ClipPiPKeyboard" OR eventMessage CONTAINS[c] "clippip.app.keyboard" OR eventMessage CONTAINS[c] "ClipPiPKeyboard"' > out/keyboard_log.txt 2>&1 || true
+          echo "log lines: $(wc -l < out/keyboard_log.txt)"; grep -i -E "crash|fault|error|exception|terminat|invalidat|denied|killed" out/keyboard_log.txt | tail -60 || true
+          xcrun simctl spawn "$UDID" launchctl list | grep -i clippip || echo "no clippip process listed"
+          cp ~/Library/Logs/DiagnosticReports/ClipPiP* out/ 2>/dev/null || echo "no crash reports"
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: keyboard-launch
+          path: out
