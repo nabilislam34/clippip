@@ -44,6 +44,50 @@ struct TogglePCClipsIntent: AppIntent {
     }
 }
 
+/// Shows up in the Shortcuts app as "Set Current App" (iOS 16+). Put it in an "App > Is Opened"
+/// automation: copies made from then on are labeled with that app. Runs without opening ClipPiP.
+@available(iOS 16.0, *)
+struct SetCurrentAppIntent: AppIntent {
+    static var title: LocalizedStringResource = "Set Current App"
+    static var description = IntentDescription(
+        "Tells ClipPiP which app is open, so the clips you copy there are labeled with it. Use it in an App > Is Opened automation.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "App name")
+    var app: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Clips now come from \(\.$app)")
+    }
+
+    func perform() async throws -> some IntentResult {
+        ClipOrigin.setCurrentApp(app)
+        return .result()
+    }
+}
+
+/// Shows up in the Shortcuts app as "Clear Current App" (iOS 16+). Put it in an "App > Is Closed"
+/// automation with the same name as its "Set Current App" twin.
+@available(iOS 16.0, *)
+struct ClearCurrentAppIntent: AppIntent {
+    static var title: LocalizedStringResource = "Clear Current App"
+    static var description = IntentDescription(
+        "Tells ClipPiP that an app was closed. Use it in an App > Is Closed automation, with the same name as in Set Current App.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "App name")
+    var app: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Clips no longer come from \(\.$app)")
+    }
+
+    func perform() async throws -> some IntentResult {
+        ClipOrigin.clearCurrentApp(app)
+        return .result()
+    }
+}
+
 @available(iOS 16.0, *)
 struct ClipPiPShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {

@@ -6,6 +6,8 @@ import SwiftUI
 struct LibTab: Decodable, Identifiable {
     let id: String
     let label: String
+    /// id of the tab this one is nested under (a CopyQ subtab, or a Ditto subgroup). nil = top level.
+    let parent: String?
 }
 
 struct LibTag: Decodable, Identifiable {
@@ -52,6 +54,8 @@ struct DeleteAsk: Identifiable {
 
 final class LibraryModel: ObservableObject {
     @Published var tabs: [LibTab] = []
+    /// ids of the group tabs whose children are shown in the sidebar.
+    @Published var expanded: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "libOpenTabs") ?? [])
     @Published var tags: [LibTag] = []
     @Published var selected = UserDefaults.standard.string(forKey: "libTab") ?? "history"
     @Published var tag = ""
@@ -79,6 +83,8 @@ final class LibraryModel: ObservableObject {
             if let data = data, resp?.statusCode == 200,
                let r = try? JSONDecoder().decode(TabsReply.self, from: data) {
                 self.tabs = r.tabs
+                self.parentIds = Set(r.tabs.compactMap { $0.parent })
+                self.openAncestors(of: self.selected)
             } else {
                 self.status = Self.describe(resp, err)
             }
@@ -96,6 +102,50 @@ final class LibraryModel: ObservableObject {
                 self.tags = []
             }
         }
+    }
+
+    /// Tabs with children, so the sidebar can draw a chevron on them.
+    @Published var parentIds: Set<String> = []
+
+    /// The sidebar rows: a child is listed right under its parent and only while that parent is open.
+    var visibleTabs: [(tab: LibTab, depth: Int)] {
+        var byParent: [String: [LibTab]] = [:]
+        var roots: [LibTab] = []
+        for t in tabs {
+            if let p = t.parent, p != t.id, tabs.contains(where: { $0.id == p }) {
+                byParent[p, default: []].append(t)
+            } else {
+                roots.append(t)
+            }
+        }
+        var out: [(LibTab, Int)] = []
+        func walk(_ list: [LibTab], _ depth: Int) {
+            for t in list {
+                out.append((t, depth))
+                if expanded.contains(t.id), depth < 6, let kids = byParent[t.id] {
+                    walk(kids, depth + 1)
+                }
+            }
+        }
+        walk(roots, 0)
+        return out.map { (tab: $0.0, depth: $0.1) }
+    }
+
+    func toggle(_ id: String) {
+        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+        UserDefaults.standard.set(Array(expanded), forKey: "libOpenTabs")
+    }
+
+    /// Opens every group above a tab, so a restored selection is not hidden inside a closed group.
+    func openAncestors(of id: String) {
+        var at = tabs.first(where: { $0.id == id })?.parent
+        var guardCount = 0
+        while let p = at, guardCount < 8 {
+            expanded.insert(p)
+            at = tabs.first(where: { $0.id == p })?.parent
+            guardCount += 1
+        }
+        UserDefaults.standard.set(Array(expanded), forKey: "libOpenTabs")
     }
 
     func select(_ id: String) {
@@ -211,6 +261,9 @@ struct ClipMenu: ViewModifier {
     var onDelete: (() -> Void)? = nil
     var blockLabel: String = ""
     var onBlock: (() -> Void)? = nil
+    var onTransform: (() -> Void)? = nil
+    var pinned: Bool = false
+    var onPin: (() -> Void)? = nil
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -225,6 +278,12 @@ struct ClipMenu: ViewModifier {
     private var actions: some View {
         Button(action: onCopy) { Label("Copy", systemImage: "doc.on.doc") }
         Button(action: onOpen) { Label("Open full clip", systemImage: "doc.text.magnifyingglass") }
+        if let onPin = onPin {
+            Button(action: onPin) { Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") }
+        }
+        if let onTransform = onTransform {
+            Button(action: onTransform) { Label("Edit prompt", systemImage: "wand.and.stars") }
+        }
         if let onRename = onRename {
             Button(action: onRename) { Label("Rename", systemImage: "pencil") }
         }
@@ -272,12 +331,18 @@ struct ClipRow: View {
     var onDelete: (() -> Void)? = nil
     var blockLabel: String = ""
     var onBlock: (() -> Void)? = nil
+    var onTransform: (() -> Void)? = nil
+    var pinned: Bool = false
+    var onPin: (() -> Void)? = nil
 
     var body: some View {
         Button(action: onCopy) {
             VStack(alignment: .leading, spacing: 3) {
                 if !name.isEmpty {
                     Text(name).font(.subheadline).fontWeight(.semibold).lineLimit(1)
+                }
+                if pinned {
+                    Label("Pinned", systemImage: "pin.fill").font(.caption2).foregroundColor(.orange)
                 }
                 if isImage {
                     AsyncImage(url: thumb) { img in
@@ -303,7 +368,8 @@ struct ClipRow: View {
         }
         .buttonStyle(.plain)
         .modifier(ClipMenu(text: text, image: isImage ? full : nil, onCopy: onCopy, onOpen: onOpen,
-                           onRename: onRename, onDelete: onDelete, blockLabel: blockLabel, onBlock: onBlock))
+                           onRename: onRename, onDelete: onDelete, blockLabel: blockLabel, onBlock: onBlock,
+                           onTransform: onTransform, pinned: pinned, onPin: onPin))
     }
 }
 
@@ -385,9 +451,11 @@ struct RenameSheet: View {
 struct LibraryView: View {
     @EnvironmentObject var monitor: ClipMonitor
     @StateObject private var lib = LibraryModel()
+    @ObservedObject private var pins = PinStore.shared
     @State private var open: OpenClip?
     @State private var renaming: LibItem?
     @State private var ask: DeleteAsk?
+    @State private var editing: EditedText?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -416,22 +484,38 @@ struct LibraryView: View {
             HStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(lib.tabs) { tab in
-                            Button { lib.select(tab.id) } label: {
-                                Text(tab.label)
-                                    .font(.footnote)
-                                    .fontWeight(lib.selected == tab.id ? .semibold : .regular)
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.vertical, 11).padding(.horizontal, 8)
-                                    .background(lib.selected == tab.id ? Color.accentColor.opacity(0.22) : Color.clear)
-                                    .contentShape(Rectangle())
+                        ForEach(lib.visibleTabs, id: \.tab.id) { row in
+                            HStack(spacing: 0) {
+                                if lib.parentIds.contains(row.tab.id) {
+                                    Button { lib.toggle(row.tab.id) } label: {
+                                        Image(systemName: lib.expanded.contains(row.tab.id) ? "chevron.down" : "chevron.right")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.secondary)
+                                            .frame(width: 14)
+                                            .padding(.vertical, 11)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    Spacer().frame(width: 14)
+                                }
+                                Button { lib.select(row.tab.id) } label: {
+                                    Text(row.tab.label)
+                                        .font(.footnote)
+                                        .fontWeight(lib.selected == row.tab.id ? .semibold : .regular)
+                                        .multilineTextAlignment(.leading)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, 11).padding(.trailing, 6)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
+                            .padding(.leading, CGFloat(row.depth) * 10)
+                            .background(lib.selected == row.tab.id ? Color.accentColor.opacity(0.22) : Color.clear)
                         }
                     }
                 }
-                .frame(width: 96)
+                .frame(width: 124)   // wider than before: nested tabs are indented
                 .background(Color(.secondarySystemBackground))
                 Divider()
                 List {
@@ -452,6 +536,7 @@ struct LibraryView: View {
         }
         .onAppear { lib.attach(monitor) }
         .sheet(item: $open) { FullClipSheet(clip: $0) }
+        .sheet(item: $editing) { TransformSheet(text: $0.text, monitor: monitor).environmentObject(monitor) }
         .alert(ask?.force == true ? "This clip is pinned in CopyQ" : "Delete this clip?",
                isPresented: Binding(get: { ask != nil }, set: { if !$0 { ask = nil } }),
                presenting: ask) { a in
@@ -487,6 +572,12 @@ struct LibraryView: View {
                        onRename: { renaming = item },
                        onDelete: { ask = DeleteAsk(item: item, force: false) },
                        blockLabel: "Block clips from \(item.src ?? "")",
-                       onBlock: (item.src ?? "").isEmpty ? nil : { lib.blockSource(of: item) })
+                       onBlock: (item.src ?? "").isEmpty ? nil : { lib.blockSource(of: item) },
+                       onTransform: isImage ? nil : { editing = EditedText(text: item.text) },
+                       pinned: pins.isPinned(item.key),
+                       onPin: {
+                           pins.toggle(Pin(id: item.key, kind: item.kind, text: item.text, name: item.name ?? "",
+                                           img: item.img, thumb: item.thumb ?? item.img))
+                       })
     }
 }

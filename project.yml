@@ -14,7 +14,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.3"
+        CFBundleShortVersionString: "1.7"
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         CFBundleURLTypes:
@@ -38,7 +38,7 @@ targets:
       path: Keyboard/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.3"
+        CFBundleShortVersionString: "1.7"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSExtension:
@@ -55,3 +55,19 @@ targets:
         SWIFT_VERSION: "5.0"
         CODE_SIGNING_ALLOWED: NO
         TARGETED_DEVICE_FAMILY: "1,2"
+  ClipPiPKeyboardTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+      - path: Sources/ClipOrigin.swift
+      - path: Sources/PromptSelection.swift
+      - path: Sources/Pins.swift
+      - path: Keyboard
+        excludes: ["Info.plist"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clippip.keyboardtests
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
