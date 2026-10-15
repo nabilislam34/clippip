@@ -24,6 +24,13 @@ enum TabOrder {
         return out
     }
 
+    /// The sidebar filter: every word typed must appear in the tab name (case and "&" shortcut marks ignored).
+    static func matches(_ label: String, _ filter: String) -> Bool {
+        let name = label.replacingOccurrences(of: "&", with: "").lowercased()
+        let words = filter.lowercased().split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        return !words.isEmpty && words.allSatisfy { name.contains($0.replacingOccurrences(of: "&", with: "")) }
+    }
+
     /// Pinned clips first, each group keeps its own order.
     static func pinnedFirst<T>(_ items: [T], isPinned: (T) -> Bool) -> [T] {
         items.filter(isPinned) + items.filter { !isPinned($0) }

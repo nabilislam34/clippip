@@ -52,6 +52,14 @@ final class TabOrderTests: XCTestCase {
         XCTAssertNil(TabOrder.parse("clippip-clip\nh1"))
     }
 
+    func testTabFilter() {
+        XCTAssertTrue(TabOrder.matches("pr&ompt presets/uc", "prompt"))
+        XCTAssertTrue(TabOrder.matches("ai nai file names", "file NAI"))
+        XCTAssertTrue(TabOrder.matches("face&s", "faces"))
+        XCTAssertFalse(TabOrder.matches("ai links", "clothes"))
+        XCTAssertFalse(TabOrder.matches("ai links", "   "))
+    }
+
     func testDropTargets() {
         XCTAssertTrue(TabOrder.canDropClip(key: "h5", on: "history:ai:file paths"))
         XCTAssertFalse(TabOrder.canDropClip(key: "c&clothes#3", on: "history:ai:file paths"))
