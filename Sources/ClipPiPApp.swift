@@ -161,13 +161,18 @@ struct ContentView: View {
     @ObservedObject private var pins = PinStore.shared
     @FocusState private var searchFocused: Bool
 
+    @State private var selecting = false
+    @State private var picked: [UUID] = []
+
     private var shown: [Clip] {
-        let words = filter.lowercased().split(separator: " ")
-        guard !words.isEmpty else { return monitor.history }
+        guard !filter.trimmingCharacters(in: .whitespaces).isEmpty else { return monitor.history }
         return monitor.history.filter { c in
-            let hay = (c.text + " " + c.note).lowercased()
-            return words.allSatisfy { hay.contains($0) }
+            ClipSearch.matches(text: c.text, note: c.note, date: c.date, query: filter)
         }
+    }
+
+    private var pickedTexts: [String] {
+        picked.compactMap { id in monitor.history.first { $0.id == id } }.filter { $0.kind != "image" }.map { $0.text }
     }
 
     private static let stamp: DateFormatter = {
@@ -180,13 +185,18 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundColor(.secondary)
-                TextField("Search these clips", text: $filter)
+                TextField("Search (today, 10-15, app:chrome)", text: $filter)
                     .autocapitalization(.none).disableAutocorrection(true)
                     .focused($searchFocused)
                 if !filter.isEmpty {
                     Button { filter = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .foregroundColor(.secondary)
                 }
+                Button(selecting ? "Done" : "Select") {
+                    selecting.toggle()
+                    picked = []
+                }
+                .font(.footnote)
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             Divider()
@@ -200,6 +210,9 @@ struct ContentView: View {
                     }
                     ForEach(shown) { c in
                         card(c)
+                            .modifier(Selectable(active: selecting, selected: picked.contains(c.id)) {
+                                if let i = picked.firstIndex(of: c.id) { picked.remove(at: i) } else { picked.append(c.id) }
+                            })
                     }
                     Text(monitor.pcStatus)
                         .font(.caption2).foregroundColor(.secondary)
@@ -208,6 +221,26 @@ struct ContentView: View {
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .background(Color(.systemGroupedBackground))
+            if selecting {
+                SelectionBar(count: picked.count,
+                             onCopy: { monitor.copyText(ClipBatch.joined(pickedTexts)) },
+                             onRandomizer: {
+                                 monitor.copyText(ClipBatch.randomizer(pickedTexts), quiet: true)
+                                 monitor.flash("Copied randomizer of \(pickedTexts.count)")
+                             },
+                             onPin: {
+                                 for id in picked {
+                                     if let c = monitor.history.first(where: { $0.id == id }), !pins.isPinned(pinId(c)) {
+                                         let isImage = c.kind == "image" && c.serverId != nil
+                                         pins.toggle(Pin(id: pinId(c), kind: isImage ? "image" : "text", text: c.text, name: "",
+                                                         img: isImage ? "/clip/file?id=\(c.serverId ?? 0)" : nil,
+                                                         thumb: isImage ? "/clip/thumb?id=\(c.serverId ?? 0)" : nil))
+                                     }
+                                 }
+                                 monitor.flash("Pinned \(picked.count)")
+                             },
+                             onDone: { selecting = false; picked = [] })
+            }
         }
         .sheet(item: $open) { FullClipSheet(clip: $0) }
         .sheet(item: $editing) { TransformSheet(text: $0.text, monitor: monitor).environmentObject(monitor) }
@@ -270,6 +303,9 @@ struct ContentView: View {
                            },
                            onDelete: { monitor.remove(c) },
                            onTransform: isImage ? nil : { editing = EditedText(text: c.text) },
+                           onQuick: isImage ? nil : { t in
+                               QuickTransform.run(t.id, label: t.label, text: c.text, monitor: monitor)
+                           },
                            pinned: pins.isPinned(pinId(c)),
                            onPin: {
                                pins.toggle(Pin(id: pinId(c), kind: isImage ? "image" : "text", text: c.text, name: "",
@@ -312,6 +348,9 @@ struct ContentView: View {
                                open = OpenClip(id: "pin-" + p.id, text: p.text, note: "", link: "", image: full, copy: copy)
                            },
                            onTransform: isImage ? nil : { editing = EditedText(text: p.text) },
+                           onQuick: isImage ? nil : { t in
+                               QuickTransform.run(t.id, label: t.label, text: p.text, monitor: monitor)
+                           },
                            pinned: true,
                            onPin: { pins.unpin(p.id) }))
     }
@@ -340,8 +379,9 @@ struct SettingsView: View {
                 .foregroundColor(monitor.pcPaused ? .red : .accentColor)
                 .disabled(monitor.server.isEmpty)
             }
-            Section(header: Text("Exclusions"),
-                    footer: Text("Which PC copies never reach this phone. Opens the PC's settings page in the browser.")) {
+            ExclusionSections()
+            Section(header: Text("Exclusions page"),
+                    footer: Text("The same settings as above, as the PC's page in the browser.")) {
                 if let url = monitor.serverURL("/pc/exclude/ui") {
                     Link("Open the exclusions page", destination: url)
                 } else {

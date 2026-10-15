@@ -179,6 +179,7 @@ final class TransformModel: ObservableObject {
 
 struct TransformSheet: View {
     @StateObject private var model: TransformModel
+    @ObservedObject private var menuStore = MenuTransformStore.shared
     @EnvironmentObject private var monitor: ClipMonitor
     @Environment(\.dismiss) private var dismiss
 
@@ -261,13 +262,18 @@ struct TransformSheet: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(items) { spec in
-                        Button(spec.label) { model.apply(spec) }
+                        Button(menuStore.isPinned(spec.id) ? "\u{1F4CC} " + spec.label : spec.label) { model.apply(spec) }
                             .font(.footnote)
                             .padding(.horizontal, 10).padding(.vertical, 7)
                             .background(Color.accentColor.opacity(0.14))
                             .foregroundColor(.accentColor)
                             .cornerRadius(9)
                             .disabled(model.busy)
+                            .contextMenu {
+                                Button(menuStore.isPinned(spec.id) ? "Unpin from clip menu" : "Pin to clip menu") {
+                                    menuStore.toggle(id: spec.id, label: spec.label)
+                                }
+                            }
                     }
                 }
                 .padding(.horizontal, 12)
