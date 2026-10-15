@@ -724,6 +724,31 @@ def _terms(query: str):
 _SEARCH_COLS = ("text", "name", "source_app", "source_title", "source_url")
 
 
+def _like_escape(term: str) -> str:
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+_DATE_FULL = re.compile(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$")
+_DATE_SHORT = re.compile(r"^(\d{1,2})[-/](\d{1,2})$")
+
+
+def _date_term(term: str) -> str:
+    """A search word that means a day or month -> a LIKE pattern on ts ("YYYY-MM-DD HH:MM:SS"), else ''."""
+    from datetime import timedelta
+    if term in ("today", "yesterday"):
+        d = datetime.now() - timedelta(days=1 if term == "yesterday" else 0)
+        return d.strftime("%Y-%m-%d") + "%"
+    m = _DATE_FULL.match(term)
+    if m and 1 <= int(m.group(2)) <= 12:
+        if m.group(3):
+            return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}%"
+        return f"{m.group(1)}-{int(m.group(2)):02d}-%"
+    m = _DATE_SHORT.match(term)
+    if m and 1 <= int(m.group(1)) <= 12 and 1 <= int(m.group(2)) <= 31:
+        return f"%-{int(m.group(1)):02d}-{int(m.group(2)):02d} %"
+    return ""
+
+
 def history_items(query: str = "", offset: int = 0, limit: int = 100, kind: str = "", side: str = "") -> dict:
     """Newest first; every search word must appear in the text, name, source app, title or url.
 
@@ -749,7 +774,16 @@ def history_items(query: str = "", offset: int = 0, limit: int = 100, kind: str 
         where.append("kind = ?")
         args.append(kind)
     for term in _terms(query):
-        like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        day = _date_term(term)
+        if day:                                   # today / yesterday / 2026-10-15 / 2026-10 / 10-15 / 10/15
+            where.append("ts LIKE ?")
+            args.append(day)
+            continue
+        if term.startswith("app:") and len(term) > 4:   # app:chrome = only clips copied in that app
+            where.append("lower(coalesce(source_app,'')) LIKE ? ESCAPE '\\'")
+            args.append("%" + _like_escape(term[4:]) + "%")
+            continue
+        like = "%" + _like_escape(term) + "%"
         where.append("(" + " OR ".join(f"lower(coalesce({c},'')) LIKE ? ESCAPE '\\'" for c in _SEARCH_COLS) + ")")
         args += [like] * len(_SEARCH_COLS)
     clause = " WHERE " + " AND ".join(where)
