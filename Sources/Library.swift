@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // Browser for clips that live on the PC: the ClipPiP clip database ("history") and the CopyQ tabs.
 // Nothing here is stored on the phone; text and images are loaded from the PC server on demand.
@@ -82,7 +83,7 @@ final class LibraryModel: ObservableObject {
             guard let self = self else { return }
             if let data = data, resp?.statusCode == 200,
                let r = try? JSONDecoder().decode(TabsReply.self, from: data) {
-                self.tabs = r.tabs
+                self.tabs = self.ordered(r.tabs)
                 self.parentIds = Set(r.tabs.compactMap { $0.parent })
                 self.openAncestors(of: self.selected)
             } else {
@@ -129,6 +130,41 @@ final class LibraryModel: ObservableObject {
         }
         walk(roots, 0)
         return out.map { (tab: $0.0, depth: $0.1) }
+    }
+
+    /// The sidebar order the user set by dragging a tab onto another one (kept on the phone).
+    private var order: [String] = UserDefaults.standard.stringArray(forKey: "libTabOrder") ?? []
+
+    private func ordered(_ list: [LibTab]) -> [LibTab] {
+        let byId = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return TabOrder.apply(list.map { $0.id }, order: order).compactMap { byId[$0] }
+    }
+
+    /// Drop tab `id` on tab `target` in the sidebar. Children stay under their own group.
+    func moveTab(_ id: String, onto target: String) {
+        let ids = TabOrder.move(id, onto: target, in: tabs.map { $0.id })
+        guard ids != tabs.map({ $0.id }) else { return }
+        order = ids
+        UserDefaults.standard.set(ids, forKey: "libTabOrder")
+        tabs = ordered(tabs)
+    }
+
+    /// A clip dropped on a sidebar tab: history clips move to an "ai ..." tab, anything else is copied into a CopyQ tab.
+    func file(key: String, sig: String, to dest: String) {
+        let label = tabs.first { $0.id == dest }?.label ?? dest
+        guard TabOrder.canDropClip(key: key, on: dest) else {
+            monitor?.flash("Can't put clips in \(label)")
+            return
+        }
+        monitor?.post("/lib/file", json: ["key": key, "sig": sig, "dest": dest]) { [weak self] ok, msg in
+            guard let self = self else { return }
+            if ok {
+                self.monitor?.flash("Put in \(label)")
+                self.reload()
+            } else {
+                self.monitor?.flash(msg.isEmpty ? "Could not put it in \(label)" : msg)
+            }
+        }
     }
 
     func toggle(_ id: String) {
@@ -222,7 +258,7 @@ final class LibraryModel: ObservableObject {
     private static func describe(_ resp: HTTPURLResponse?, _ err: Error?) -> String {
         if let err = err { return err.localizedDescription }
         if let resp = resp { return resp.statusCode == 401 ? "wrong token" : "PC server said HTTP \(resp.statusCode)" }
-        return "Set the PC server URL in the Clips tab"
+        return "Set the PC server URL in the Settings tab"
     }
 
     private func load(offset: Int, refresh: Bool) {
@@ -456,6 +492,27 @@ struct LibraryView: View {
     @State private var renaming: LibItem?
     @State private var ask: DeleteAsk?
     @State private var editing: EditedText?
+    @State private var dropTarget: String?
+
+    /// Pinned clips at the top of every tab (issue #8), the rest in the server's order.
+    private var shownItems: [LibItem] {
+        TabOrder.pinnedFirst(lib.items) { pins.isPinned($0.key) }
+    }
+
+    /// A tab or a clip dropped on a sidebar tab.
+    private func drop(_ providers: [NSItemProvider], on target: String) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return false }
+        _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
+            guard let text = obj as? String, let what = TabOrder.parse(text) else { return }
+            DispatchQueue.main.async {
+                switch what {
+                case .tab(let id): lib.moveTab(id, onto: target)
+                case .clip(let key, let sig): lib.file(key: key, sig: sig, to: target)
+                }
+            }
+        }
+        return true
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -511,7 +568,16 @@ struct LibraryView: View {
                                 .buttonStyle(.plain)
                             }
                             .padding(.leading, CGFloat(row.depth) * 10)
-                            .background(lib.selected == row.tab.id ? Color.accentColor.opacity(0.22) : Color.clear)
+                            .background(dropTarget == row.tab.id ? Color.orange.opacity(0.35)
+                                        : (lib.selected == row.tab.id ? Color.accentColor.opacity(0.22) : Color.clear))
+                            .onDrag { NSItemProvider(object: TabOrder.tabPayload(row.tab.id) as NSString) }
+                            .onDrop(of: [UTType.plainText], isTargeted: Binding(
+                                get: { dropTarget == row.tab.id },
+                                set: { on in
+                                    if on { dropTarget = row.tab.id } else if dropTarget == row.tab.id { dropTarget = nil }
+                                })) { providers in
+                                drop(providers, on: row.tab.id)
+                            }
                         }
                     }
                 }
@@ -519,8 +585,10 @@ struct LibraryView: View {
                 .background(Color(.secondarySystemBackground))
                 Divider()
                 List {
-                    ForEach(lib.items) { item in
-                        row(item).onAppear { lib.loadMoreIfNeeded(item) }
+                    ForEach(shownItems) { item in
+                        row(item)
+                            .onAppear { lib.loadMoreIfNeeded(item) }
+                            .onDrag { NSItemProvider(object: TabOrder.clipPayload(key: item.key, sig: item.sig ?? "") as NSString) }
                     }
                     if lib.loading {
                         HStack { Spacer(); ProgressView(); Spacer() }
