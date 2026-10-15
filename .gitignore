@@ -6,3 +6,8 @@ Sources/Info.plist
 Keyboard/Info.plist
 .DS_Store
 backup/
+server/clippip_secrets.json
+server/clippip_config.json
+server/*.log
+server/__pycache__/
+server/**/__pycache__/
