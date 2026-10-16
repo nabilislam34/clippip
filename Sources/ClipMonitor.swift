@@ -101,6 +101,16 @@ final class ClipMonitor: ObservableObject {
         if !quiet { flash("Copied") }
     }
 
+    /// Copy NEW text made on the phone (randomizer, joined picks, quick transforms) to the phone AND the PC.
+    /// copyText() alone never reaches the PC: tick() skips the phone's own copies.
+    func copyNewText(_ text: String, quiet: Bool = false) {
+        copyText(text, quiet: quiet)
+        guard activateOnPC else { return }
+        post("/clip/push", json: ["text": text, "copy": true, "save": false]) { [weak self] ok, _ in
+            if !ok { self?.flash("Copied on the phone only (PC did not take it)") }
+        }
+    }
+
     func copyImage(path: String, quiet: Bool = false) {
         fetch(path, timeout: 60) { [weak self] data, resp, _ in
             guard let self = self else { return }
@@ -143,18 +153,41 @@ final class ClipMonitor: ObservableObject {
 
     private func tick() {
         let pb = UIPasteboard.general
-        guard pb.changeCount != lastChange else { return }
+        guard pb.changeCount != lastChange else { retryPending(); return }
         lastChange = pb.changeCount
+        let copiedAt = Self.nowMs()
         let types = pb.types.joined(separator: ",")
         let hints = ClipOrigin.headers(for: pb)
         if pb.hasStrings, let s = pb.string, !s.isEmpty {
             let body = "text=" + Self.encode(s)
             send(Data(body.utf8), type: "application/x-www-form-urlencoded", label: s, kind: "text",
-                 link: Self.sourceURL(pb), types: types, hints: hints)
+                 link: Self.sourceURL(pb), types: types, hints: hints, copiedAt: copiedAt)
         } else if pb.hasImages, let img = pb.image, let png = img.pngData() {
             send(png, type: "image/png", label: "[image \(png.count / 1024) KB]", kind: "image",
-                 link: Self.sourceURL(pb), types: types, hints: hints)
+                 link: Self.sourceURL(pb), types: types, hints: hints, copiedAt: copiedAt)
         }
+    }
+
+    private static func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+    /// A phone copy whose send failed (no network, PC asleep, timeout). Retried from tick(), oldest first.
+    private struct PendingSend {
+        let body: Data, type: String, label: String, kind: String, link: String?, types: String
+        let hints: [String: String], copiedAt: Int64
+        var tries: Int
+        var nextAt: Date
+    }
+    private var pending: [PendingSend] = []
+    private var retrying = false
+    private static let maxPending = 10
+
+    private func retryPending() {
+        guard !retrying, var p = pending.first, Date() >= p.nextAt else { return }
+        pending.removeFirst()
+        p.tries += 1
+        retrying = true
+        send(p.body, type: p.type, label: p.label, kind: p.kind, link: p.link, types: p.types, hints: p.hints,
+             copiedAt: p.copiedAt, tries: p.tries)
     }
 
     /// Where a copy came from. iOS never says which app copied, but a copy made in a browser carries
@@ -193,14 +226,19 @@ final class ClipMonitor: ObservableObject {
     }
 
     private func send(_ body: Data, type: String, label: String, kind: String, link: String?, types: String,
-                      hints: [String: String]) {
+                      hints: [String: String], copiedAt: Int64, tries: Int = 0) {
         guard let url = serverURL("/set") else {
+            retrying = false
             record(label, "set the server URL first", fromPC: false, kind: kind); return
         }
-        var req = URLRequest(url: url, timeoutInterval: 15)
+        var req = URLRequest(url: url, timeoutInterval: 8)
         req.httpMethod = "POST"
         req.setValue(type, forHTTPHeaderField: "Content-Type")
         req.setValue(UIDevice.current.model, forHTTPHeaderField: "X-Device")
+        // For the server's latency.log: when tick() saw the copy, when it went out, which try this is.
+        req.setValue(String(copiedAt), forHTTPHeaderField: "X-Clip-Copied-At")
+        req.setValue(String(Self.nowMs()), forHTTPHeaderField: "X-Clip-Sent-At")
+        req.setValue(String(tries), forHTTPHeaderField: "X-Clip-Retry")
         if let link = link, let safe = Self.headerSafe(link, max: 2000) {
             req.setValue(safe, forHTTPHeaderField: "X-Clip-Url")
         }
@@ -219,13 +257,31 @@ final class ClipMonitor: ObservableObject {
         session.dataTask(with: req) { [weak self] _, resp, err in
             let note: String
             var clipId: Int?
+            let status = (resp as? HTTPURLResponse)?.statusCode
             if let err = err { note = "failed: \(err.localizedDescription)" }
             else if let h = resp as? HTTPURLResponse {
                 note = h.statusCode == 200 ? "sent" : "HTTP \(h.statusCode)"
                 clipId = h.value(forHTTPHeaderField: "X-Clip-Id").flatMap { Int($0) }
             }
             else { note = "no response" }
-            DispatchQueue.main.async { self?.record(label, note, fromPC: false, kind: kind, serverId: clipId) }
+            // No answer or a server error: keep it and try again (3 s, 6 s, ... up to 30 s apart).
+            let retry = (err != nil || status == nil || status! >= 500) && tries < 20
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if tries > 0 { self.retrying = false }
+                if retry {
+                    let wait = min(30.0, 3.0 * Double(tries + 1))
+                    self.pending.append(PendingSend(body: body, type: type, label: label, kind: kind, link: link,
+                                                    types: types, hints: hints, copiedAt: copiedAt, tries: tries,
+                                                    nextAt: Date().addingTimeInterval(wait)))
+                    if self.pending.count > Self.maxPending { self.pending.removeFirst() }
+                }
+                if tries == 0 {   // one history row per copy; retries only update the toast
+                    self.record(label, retry ? note + " (retrying)" : note, fromPC: false, kind: kind, serverId: clipId)
+                } else if !retry {
+                    self.flash(note == "sent" ? "Sent to PC after \(tries) retries" : "PC never took it: \(note)")
+                }
+            }
             if bg != .invalid { UIApplication.shared.endBackgroundTask(bg) }
         }.resume()
     }
