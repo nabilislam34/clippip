@@ -1,5 +1,19 @@
 # ClipPiP handoff (2026-10-15)
 
+## 2026-10-15 (late): pin button, search scope toggle, chunk + body weights tabs (branch `clips-ui-rework`, PR #10, commit da68799)
+
+- State: CI run 38839457458 green (build + simulator tests). IPA = that run's `ClipPiP.ipa` artifact. NOT phone-tested; phone was still on an older build (no Select button), so 1.9 multi-select is also untested there.
+- App:
+  - Edit prompt sheet: visible "Pin transforms to the clip menu" button = pin mode; tap a transform to pin/unpin (the old hidden long-press did not work in the scrolling chip row). Pinned ones show as "Copy as <label>" in the long-press menu.
+  - Library: arrow under the search bar toggles "Searching this tab" / "Searching all tabs" (`LibraryModel.globalSearch`, sends server tab `*` when a query is set). Covers issue #11. `*` = all CopyQ tabs only (not phone history, Ditto or chunks).
+- Server (`clipboard_sync\clippip_store.py`, mirrored in `ios_pip_app\server\`):
+  - Read-only chunk tabs from `00000 ditto clips database\Prompt clips database
+ai_prompt_chunks.json`: parent `chunks` + `chunks:<group>` labelled "chunk <group>" (12 groups, 1002 chunks). Key `k<group>#<i>`, name = chunk label, text = expansion. No rename/delete.
+  - Ditto group 35697 "body weights, presets" added to `clippip_config.json` `ditto_groups` (340 clips; Ditto QuickPasteText already becomes tags).
+  - Verified over HTTP on the live server (port 5051). Restarted via task `ClipboardSyncServer`, last PID 41476.
+  - Pitfall: edit the LIVE `clipboard_sync\clippip_store.py`, not only the `ios_pip_app\server` copy.
+- Open: phone test (pin button, search toggle, Select, chunk tabs); kanban item "context menu to add a clip as a chunk" (chunk server 3747) not built; issues #6, #5, #2, #1.
+
 ## 2026-10-15: UI rework done, issues #8/#9, multi-select, menu transforms, native exclusions (branch `clips-ui-rework`, 1.9, PR #10)
 
 - State: PR #10 (base main) NOT merged. CI run 38815701941 green, 50 simulator tests. IPA `ios apps\ClipPiP\ClipPiP_1.9.ipa`. NOT tested on the phone (phone still on 1.5).
