@@ -1033,6 +1033,46 @@ def _ditto_gid(tab: str):
     return gid
 
 
+CHUNKS_JSON = os.path.join(os.path.expanduser("~"), "Documents local backup of HDD", "00000 ditto clips database",
+                           "Prompt clips database", "nai_prompt_chunks.json")
+CHUNK_TAB = "chunks"
+
+
+def _chunk_groups() -> list:
+    """NAI prompt chunk groups from the chunk server's export (read only, re-read when the file changes)."""
+    try:
+        mtime = os.path.getmtime(CHUNKS_JSON)
+        if _chunk_cache.get("m") != mtime:
+            with open(CHUNKS_JSON, encoding="utf-8") as fh:
+                _chunk_cache.update(m=mtime, groups=json.load(fh))
+        return _chunk_cache["groups"]
+    except (OSError, ValueError):
+        return []
+
+
+_chunk_cache: dict = {}
+
+
+def _chunk_items(tab: str, query: str, offset: int, limit: int) -> dict:
+    terms = _terms(query)
+    want = tab.partition(":")[2]
+    matched = []
+    for g in _chunk_groups():
+        if want and g.get("label") != want:
+            continue
+        for i, c in enumerate(g.get("chunks", [])):
+            text = c.get("expansion", "")
+            hay = (text + " " + c.get("label", "")).lower()
+            if terms and not all(t in hay for t in terms):
+                continue
+            matched.append((g.get("label", ""), i, c))
+    items = [{"key": f"k{grp}#{i}", "kind": "text", "text": c.get("expansion", ""), "name": c.get("label", ""),
+              "note": grp if not want else "", "tags": [], "url": "",
+              "sig": hashlib.md5(c.get("expansion", "").encode("utf-8")).hexdigest()[:12]}
+             for grp, i, c in matched[offset:offset + limit]]
+    return {"total": len(matched), "items": items}
+
+
 def lib_tabs() -> list:
     tabs = [{"id": HISTORY_TAB + ":ios", "label": "phone clips"}, {"id": HISTORY_TAB + ":pc", "label": "pc clips"},
             {"id": HISTORY_TAB, "label": "all clips"}, {"id": "*", "label": "all copyq"}]
@@ -1041,6 +1081,11 @@ def lib_tabs() -> list:
         if t.get("parent"):
             entry["parent"] = t["parent"]
         tabs.append(entry)
+    groups = _chunk_groups()
+    if groups:
+        tabs.append({"id": CHUNK_TAB, "label": "chunks"})
+        for g in groups:
+            tabs.append({"id": CHUNK_TAB + ":" + g.get("label", ""), "label": "chunk " + g.get("label", ""), "parent": CHUNK_TAB})
     for g in ditto_groups():
         entry = {"id": _ditto_tab_id(g["id"]), "label": g["label"]}
         if g["parent"]:
@@ -1084,6 +1129,8 @@ def lib_items(tab: str, query: str = "", offset: int = 0, limit: int = 100, forc
     offset = max(0, int(offset))
     if tab == HISTORY_TAB or tab.startswith(HISTORY_TAB + ":"):
         return history_items(query, offset, limit, kind, side=tab.partition(":")[2])
+    if tab == CHUNK_TAB or tab.startswith(CHUNK_TAB + ":"):
+        return _chunk_items(tab, query, offset, limit)
     gid = _ditto_gid(tab)
     if gid is not None:
         return _ditto_items(gid, query, offset, limit, force, tag, kind)
@@ -1136,7 +1183,7 @@ def _ditto_items(gid: int, query: str, offset: int, limit: int, force: bool, tag
 
 def lib_tags(tab: str) -> list:
     """CopyQ tags used in a tab (or all tabs), most used first."""
-    if tab == HISTORY_TAB or tab.startswith(HISTORY_TAB + ":"):
+    if tab == HISTORY_TAB or tab.startswith(HISTORY_TAB + ":") or tab == CHUNK_TAB or tab.startswith(CHUNK_TAB + ":"):
         return []
     counts, shown = {}, {}
     gid = _ditto_gid(tab)
