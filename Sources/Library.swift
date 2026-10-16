@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // Browser for clips that live on the PC: the ClipPiP clip database ("history") and the CopyQ tabs.
 // Nothing here is stored on the phone; text and images are loaded from the PC server on demand.
@@ -63,6 +64,8 @@ final class LibraryModel: ObservableObject {
     @Published var total = 0
     @Published var status = ""
     @Published var loading = false
+    /// true = the search box looks through every CopyQ tab (server tab "*") instead of the open tab.
+    @Published var globalSearch = false { didSet { if globalSearch != oldValue && !query.isEmpty { reload() } } }
     @Published var query = "" { didSet { if query != oldValue { scheduleSearch() } } }
 
     private weak var monitor: ClipMonitor?
@@ -82,7 +85,7 @@ final class LibraryModel: ObservableObject {
             guard let self = self else { return }
             if let data = data, resp?.statusCode == 200,
                let r = try? JSONDecoder().decode(TabsReply.self, from: data) {
-                self.tabs = r.tabs
+                self.tabs = self.ordered(r.tabs)
                 self.parentIds = Set(r.tabs.compactMap { $0.parent })
                 self.openAncestors(of: self.selected)
             } else {
@@ -108,7 +111,13 @@ final class LibraryModel: ObservableObject {
     @Published var parentIds: Set<String> = []
 
     /// The sidebar rows: a child is listed right under its parent and only while that parent is open.
+    /// Text typed in the sidebar's filter box: only tabs whose name matches are listed (flat, groups ignored).
+    @Published var tabFilter = ""
+
     var visibleTabs: [(tab: LibTab, depth: Int)] {
+        if !tabFilter.trimmingCharacters(in: .whitespaces).isEmpty {
+            return tabs.filter { TabOrder.matches($0.label, tabFilter) }.map { (tab: $0, depth: 0) }
+        }
         var byParent: [String: [LibTab]] = [:]
         var roots: [LibTab] = []
         for t in tabs {
@@ -129,6 +138,41 @@ final class LibraryModel: ObservableObject {
         }
         walk(roots, 0)
         return out.map { (tab: $0.0, depth: $0.1) }
+    }
+
+    /// The sidebar order the user set by dragging a tab onto another one (kept on the phone).
+    private var order: [String] = UserDefaults.standard.stringArray(forKey: "libTabOrder") ?? []
+
+    private func ordered(_ list: [LibTab]) -> [LibTab] {
+        let byId = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return TabOrder.apply(list.map { $0.id }, order: order).compactMap { byId[$0] }
+    }
+
+    /// Drop tab `id` on tab `target` in the sidebar. Children stay under their own group.
+    func moveTab(_ id: String, onto target: String) {
+        let ids = TabOrder.move(id, onto: target, in: tabs.map { $0.id })
+        guard ids != tabs.map({ $0.id }) else { return }
+        order = ids
+        UserDefaults.standard.set(ids, forKey: "libTabOrder")
+        tabs = ordered(tabs)
+    }
+
+    /// A clip dropped on a sidebar tab: history clips move to an "ai ..." tab, anything else is copied into a CopyQ tab.
+    func file(key: String, sig: String, to dest: String) {
+        let label = tabs.first { $0.id == dest }?.label ?? dest
+        guard TabOrder.canDropClip(key: key, on: dest) else {
+            monitor?.flash("Can't put clips in \(label)")
+            return
+        }
+        monitor?.post("/lib/file", json: ["key": key, "sig": sig, "dest": dest]) { [weak self] ok, msg in
+            guard let self = self else { return }
+            if ok {
+                self.monitor?.flash("Put in \(label)")
+                self.reload()
+            } else {
+                self.monitor?.flash(msg.isEmpty ? "Could not put it in \(label)" : msg)
+            }
+        }
     }
 
     func toggle(_ id: String) {
@@ -222,14 +266,15 @@ final class LibraryModel: ObservableObject {
     private static func describe(_ resp: HTTPURLResponse?, _ err: Error?) -> String {
         if let err = err { return err.localizedDescription }
         if let resp = resp { return resp.statusCode == 401 ? "wrong token" : "PC server said HTTP \(resp.statusCode)" }
-        return "Set the PC server URL in the Clips tab"
+        return "Set the PC server URL in the Settings tab"
     }
 
     private func load(offset: Int, refresh: Bool) {
         guard let monitor = monitor else { return }
         let gen = generation
         loading = true
-        let path = "/lib/items?tab=\(Self.enc(selected))&q=\(Self.enc(query))&tag=\(Self.enc(tag))"
+        let searchTab = (globalSearch && !query.isEmpty) ? "*" : selected
+        let path = "/lib/items?tab=\(Self.enc(searchTab))&q=\(Self.enc(query))&tag=\(Self.enc(tag))"
             + "&offset=\(offset)&limit=\(pageSize)" + (refresh ? "&refresh=1" : "")
         monitor.fetch(path, timeout: 90) { [weak self] data, resp, err in
             guard let self = self, gen == self.generation else { return }
@@ -262,8 +307,11 @@ struct ClipMenu: ViewModifier {
     var blockLabel: String = ""
     var onBlock: (() -> Void)? = nil
     var onTransform: (() -> Void)? = nil
+    /// Text clips: the transforms pinned to this menu (Edit prompt sheet > hold a transform > Pin to clip menu).
+    var onQuick: ((MenuTransform) -> Void)? = nil
     var pinned: Bool = false
     var onPin: (() -> Void)? = nil
+    @ObservedObject var quick = MenuTransformStore.shared
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -277,6 +325,12 @@ struct ClipMenu: ViewModifier {
     @ViewBuilder
     private var actions: some View {
         Button(action: onCopy) { Label("Copy", systemImage: "doc.on.doc") }
+        if let onQuick = onQuick, !quick.pinned.isEmpty {
+            ForEach(quick.pinned) { t in
+                Button { onQuick(t) } label: { Label("Copy as " + t.label, systemImage: "wand.and.stars") }
+            }
+            Divider()
+        }
         Button(action: onOpen) { Label("Open full clip", systemImage: "doc.text.magnifyingglass") }
         if let onPin = onPin {
             Button(action: onPin) { Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") }
@@ -334,6 +388,7 @@ struct ClipRow: View {
     var onTransform: (() -> Void)? = nil
     var pinned: Bool = false
     var onPin: (() -> Void)? = nil
+    var onQuick: ((MenuTransform) -> Void)? = nil
 
     var body: some View {
         Button(action: onCopy) {
@@ -369,7 +424,70 @@ struct ClipRow: View {
         .buttonStyle(.plain)
         .modifier(ClipMenu(text: text, image: isImage ? full : nil, onCopy: onCopy, onOpen: onOpen,
                            onRename: onRename, onDelete: onDelete, blockLabel: blockLabel, onBlock: onBlock,
-                           onTransform: onTransform, pinned: pinned, onPin: onPin))
+                           onTransform: onTransform, onQuick: onQuick, pinned: pinned, onPin: onPin))
+    }
+}
+
+/// Runs one PC transform over a whole clip and copies the result (the long-press quick transforms).
+enum QuickTransform {
+    static func run(_ id: String, label: String, text: String, monitor: ClipMonitor) {
+        monitor.postJSON("/transform", json: ["action": id, "text": text]) { ok, obj, message in
+            guard ok, let out = obj?["text"] as? String else {
+                monitor.flash(message.isEmpty ? "\(label) failed" : message)
+                return
+            }
+            if (obj?["changed"] as? Bool) == false {
+                monitor.flash("\(label): nothing to change")
+                return
+            }
+            monitor.copyText(out, quiet: true)
+            monitor.flash("Copied: \(label)")
+        }
+    }
+}
+
+/// Select mode: a check circle in front of the row, a tap toggles it instead of copying.
+struct Selectable: ViewModifier {
+    let active: Bool
+    let selected: Bool
+    let toggle: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if active {
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(selected ? .accentColor : .secondary)
+                content.allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: toggle)
+        } else {
+            content
+        }
+    }
+}
+
+/// The bar under a list in select mode.
+struct SelectionBar: View {
+    let count: Int
+    let onCopy: () -> Void
+    let onRandomizer: () -> Void
+    let onPin: () -> Void
+    let onDone: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Text("\(count) selected").foregroundColor(.secondary)
+            Spacer(minLength: 4)
+            Button("Copy", action: onCopy).disabled(count == 0)
+            Button("Randomizer", action: onRandomizer).disabled(count == 0)
+            Button("Pin", action: onPin).disabled(count == 0)
+            Button("Done", action: onDone).font(.footnote.weight(.semibold))
+        }
+        .font(.footnote)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Color(.secondarySystemBackground))
     }
 }
 
@@ -456,6 +574,37 @@ struct LibraryView: View {
     @State private var renaming: LibItem?
     @State private var ask: DeleteAsk?
     @State private var editing: EditedText?
+    @State private var dropTarget: String?
+    @State private var selecting = false
+    @State private var picked: [String] = []        // keys, in the order tapped
+
+    private func togglePick(_ key: String) {
+        if let i = picked.firstIndex(of: key) { picked.remove(at: i) } else { picked.append(key) }
+    }
+
+    private var pickedTexts: [String] {
+        picked.compactMap { k in lib.items.first { $0.key == k } }.filter { $0.kind != "image" }.map { $0.text }
+    }
+
+    /// Pinned clips at the top of every tab (issue #8), the rest in the server's order.
+    private var shownItems: [LibItem] {
+        TabOrder.pinnedFirst(lib.items) { pins.isPinned($0.key) }
+    }
+
+    /// A tab or a clip dropped on a sidebar tab.
+    private func drop(_ providers: [NSItemProvider], on target: String) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return false }
+        _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
+            guard let text = obj as? String, let what = TabOrder.parse(text) else { return }
+            DispatchQueue.main.async {
+                switch what {
+                case .tab(let id): lib.moveTab(id, onto: target)
+                case .clip(let key, let sig): lib.file(key: key, sig: sig, to: target)
+                }
+            }
+        }
+        return true
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -477,11 +626,46 @@ struct LibraryView: View {
                         Image(systemName: lib.tag.isEmpty ? "tag" : "tag.fill")
                     }
                 }
+                Button(selecting ? "Done" : "Select") {
+                    selecting.toggle()
+                    picked = []
+                }
+                .font(.footnote)
                 Button { lib.reload(refresh: true); lib.loadTags() } label: { Image(systemName: "arrow.clockwise") }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
+            HStack {
+                Menu {
+                    Button { lib.globalSearch = false } label: {
+                        Label("Search in this tab", systemImage: lib.globalSearch ? "" : "checkmark")
+                    }
+                    Button { lib.globalSearch = true } label: {
+                        Label("Search all tabs", systemImage: lib.globalSearch ? "checkmark" : "")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(lib.globalSearch ? "Searching all tabs" : "Searching this tab")
+                        Image(systemName: "chevron.down")
+                    }
+                    .font(.caption)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.bottom, 4)
             Divider()
             HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                HStack(spacing: 2) {
+                    TextField("Find tab", text: $lib.tabFilter)
+                        .font(.footnote)
+                        .autocapitalization(.none).disableAutocorrection(true)
+                    if !lib.tabFilter.isEmpty {
+                        Button { lib.tabFilter = "" } label: { Image(systemName: "xmark.circle.fill").font(.footnote) }
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 6).padding(.vertical, 6)
+                Divider()
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(lib.visibleTabs, id: \.tab.id) { row in
@@ -511,16 +695,31 @@ struct LibraryView: View {
                                 .buttonStyle(.plain)
                             }
                             .padding(.leading, CGFloat(row.depth) * 10)
-                            .background(lib.selected == row.tab.id ? Color.accentColor.opacity(0.22) : Color.clear)
+                            .background(dropTarget == row.tab.id ? Color.orange.opacity(0.35)
+                                        : (lib.selected == row.tab.id ? Color.accentColor.opacity(0.22) : Color.clear))
+                            .onDrag { NSItemProvider(object: TabOrder.tabPayload(row.tab.id) as NSString) }
+                            .onDrop(of: [UTType.plainText], isTargeted: Binding(
+                                get: { dropTarget == row.tab.id },
+                                set: { on in
+                                    if on { dropTarget = row.tab.id } else if dropTarget == row.tab.id { dropTarget = nil }
+                                })) { providers in
+                                drop(providers, on: row.tab.id)
+                            }
                         }
                     }
+                }
                 }
                 .frame(width: 124)   // wider than before: nested tabs are indented
                 .background(Color(.secondarySystemBackground))
                 Divider()
                 List {
-                    ForEach(lib.items) { item in
-                        row(item).onAppear { lib.loadMoreIfNeeded(item) }
+                    ForEach(shownItems) { item in
+                        row(item)
+                            .modifier(Selectable(active: selecting, selected: picked.contains(item.key)) {
+                                togglePick(item.key)
+                            })
+                            .onAppear { lib.loadMoreIfNeeded(item) }
+                            .onDrag { NSItemProvider(object: TabOrder.clipPayload(key: item.key, sig: item.sig ?? "") as NSString) }
                     }
                     if lib.loading {
                         HStack { Spacer(); ProgressView(); Spacer() }
@@ -530,6 +729,24 @@ struct LibraryView: View {
                 .sheet(item: $renaming) { item in
                     RenameSheet(item: item) { lib.rename(item, to: $0) }
                 }
+            }
+            if selecting {
+                SelectionBar(count: picked.count,
+                             onCopy: { monitor.copyText(ClipBatch.joined(pickedTexts)) },
+                             onRandomizer: {
+                                 monitor.copyText(ClipBatch.randomizer(pickedTexts), quiet: true)
+                                 monitor.flash("Copied randomizer of \(pickedTexts.count)")
+                             },
+                             onPin: {
+                                 for k in picked where !pins.isPinned(k) {
+                                     if let item = lib.items.first(where: { $0.key == k }) {
+                                         pins.toggle(Pin(id: item.key, kind: item.kind, text: item.text,
+                                                         name: item.name ?? "", img: item.img, thumb: item.thumb ?? item.img))
+                                     }
+                                 }
+                                 monitor.flash("Pinned \(picked.count)")
+                             },
+                             onDone: { selecting = false; picked = [] })
             }
             Divider()
             Text(lib.status).font(.caption2).foregroundColor(.secondary).padding(4)
@@ -578,6 +795,9 @@ struct LibraryView: View {
                        onPin: {
                            pins.toggle(Pin(id: item.key, kind: item.kind, text: item.text, name: item.name ?? "",
                                            img: item.img, thumb: item.thumb ?? item.img))
+                       },
+                       onQuick: isImage ? nil : { t in
+                           QuickTransform.run(t.id, label: t.label, text: item.text, monitor: monitor)
                        })
     }
 }
