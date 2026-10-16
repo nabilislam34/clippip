@@ -64,6 +64,8 @@ final class LibraryModel: ObservableObject {
     @Published var total = 0
     @Published var status = ""
     @Published var loading = false
+    /// true = the search box looks through every CopyQ tab (server tab "*") instead of the open tab.
+    @Published var globalSearch = false { didSet { if globalSearch != oldValue && !query.isEmpty { reload() } } }
     @Published var query = "" { didSet { if query != oldValue { scheduleSearch() } } }
 
     private weak var monitor: ClipMonitor?
@@ -271,7 +273,8 @@ final class LibraryModel: ObservableObject {
         guard let monitor = monitor else { return }
         let gen = generation
         loading = true
-        let path = "/lib/items?tab=\(Self.enc(selected))&q=\(Self.enc(query))&tag=\(Self.enc(tag))"
+        let searchTab = (globalSearch && !query.isEmpty) ? "*" : selected
+        let path = "/lib/items?tab=\(Self.enc(searchTab))&q=\(Self.enc(query))&tag=\(Self.enc(tag))"
             + "&offset=\(offset)&limit=\(pageSize)" + (refresh ? "&refresh=1" : "")
         monitor.fetch(path, timeout: 90) { [weak self] data, resp, err in
             guard let self = self, gen == self.generation else { return }
@@ -631,6 +634,24 @@ struct LibraryView: View {
                 Button { lib.reload(refresh: true); lib.loadTags() } label: { Image(systemName: "arrow.clockwise") }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
+            HStack {
+                Menu {
+                    Button { lib.globalSearch = false } label: {
+                        Label("Search in this tab", systemImage: lib.globalSearch ? "" : "checkmark")
+                    }
+                    Button { lib.globalSearch = true } label: {
+                        Label("Search all tabs", systemImage: lib.globalSearch ? "checkmark" : "")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(lib.globalSearch ? "Searching all tabs" : "Searching this tab")
+                        Image(systemName: "chevron.down")
+                    }
+                    .font(.caption)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.bottom, 4)
             Divider()
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
