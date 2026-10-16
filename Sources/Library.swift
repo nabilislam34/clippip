@@ -440,7 +440,7 @@ enum QuickTransform {
                 monitor.flash("\(label): nothing to change")
                 return
             }
-            monitor.copyText(out, quiet: true)
+            monitor.copyNewText(out, quiet: true)
             monitor.flash("Copied: \(label)")
         }
     }
@@ -732,9 +732,9 @@ struct LibraryView: View {
             }
             if selecting {
                 SelectionBar(count: picked.count,
-                             onCopy: { monitor.copyText(ClipBatch.joined(pickedTexts)) },
+                             onCopy: { monitor.copyNewText(ClipBatch.joined(pickedTexts)) },
                              onRandomizer: {
-                                 monitor.copyText(ClipBatch.randomizer(pickedTexts), quiet: true)
+                                 monitor.copyNewText(ClipBatch.randomizer(pickedTexts), quiet: true)
                                  monitor.flash("Copied randomizer of \(pickedTexts.count)")
                              },
                              onPin: {

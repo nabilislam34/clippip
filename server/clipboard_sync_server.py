@@ -196,6 +196,30 @@ def clipboard_seq() -> int:
     return store.clipboard_seq()
 
 
+_LATENCY_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "latency.log")
+
+
+def _log_latency(headers, t_recv: float, t_set: float, t_done: float, status: int, size: int) -> None:
+    """One line per phone copy: copied->received (phone + network), clipboard set time, db save time.
+    copied_at / sent_at are epoch ms stamped by the app (missing on app versions before 2.0)."""
+    def ms(name):
+        try:
+            return int(headers.get(name, ""))
+        except ValueError:
+            return None
+    copied, sent, retries = ms("X-Clip-Copied-At"), ms("X-Clip-Sent-At"), headers.get("X-Clip-Retry", "0")
+    recv_ms = int(t_recv * 1000)
+    wait = f"{recv_ms - copied}" if copied else "-"
+    net = f"{recv_ms - sent}" if sent else "-"
+    try:
+        with open(_LATENCY_LOG, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} status={status} copied_to_recv_ms={wait}"
+                     f" net_ms={net} retry={retries} set_ms={int((t_set - t_recv) * 1000)}"
+                     f" save_ms={int((t_done - t_set) * 1000)} chars={size}\n")
+    except OSError:
+        pass
+
+
 def _save_clip_safe(**kw):
     """Storing a clip must never break the clipboard sync itself."""
     try:
@@ -476,15 +500,19 @@ class Handler(BaseHTTPRequestHandler):
             print("[rejected] looks like clipboard sync server log")
             return
 
-        clip_id = None
-        if text.strip():
-            clip_id = _save_clip_safe(direction="ios_to_pc", kind="text", text=text, device=device,
-                                      source_url=ios_url, ios_types=ios_types, **ios_src)
+        def save_text():
+            if not text.strip():
+                return None
+            cid = _save_clip_safe(direction="ios_to_pc", kind="text", text=text, device=device,
+                                  source_url=ios_url, ios_types=ios_types, **ios_src)
             # links copied on the phone go to the local browsing history server as well
             links.forward(text, direction="ios_to_pc",
                           source_app=ios_src.get("source_app", ""), device=device)
+            store.reddit_title_later(cid, text + " " + ios_url)
+            return cid
 
         if pdf_from_filenames_enabled() and looks_like_phone_filelist(text):
+            save_text()
             os.makedirs(PDF_FILELIST_DIR, exist_ok=True)
             txt_path = os.path.join(PDF_FILELIST_DIR, f"clipboard_{int(time.time())}.txt")
             with open(txt_path, "w", encoding="utf-8") as fh:
@@ -495,19 +523,24 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[filepath-list] wrote {txt_path}")
             return
 
+        # The Windows clipboard first, the db after: storing must never delay the paste.
+        t_recv = time.time()
+        status = 200
         try:
             _echo["sha"] = store.content_sha("text", text)
             set_windows_clipboard(text)
             _echo["seq"] = clipboard_seq()
-            self.send_response(200)
-            if clip_id is not None:
-                self.send_header("X-Clip-Id", str(clip_id))
-            self.end_headers()
-            self.wfile.write(b"ok")
         except subprocess.CalledProcessError as e:
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(str(e).encode())
+            status = 500
+            err = str(e)
+        t_set = time.time()
+        clip_id = save_text()
+        _log_latency(self.headers, t_recv, t_set, time.time(), status, len(text))
+        self.send_response(status)
+        if clip_id is not None:
+            self.send_header("X-Clip-Id", str(clip_id))
+        self.end_headers()
+        self.wfile.write(b"ok" if status == 200 else err.encode())
 
     def do_GET(self):
         if not self._authorized():

@@ -620,6 +620,8 @@ def ios_source(types: str, url: str, hosts: str = "", origin: str = "", origin_n
         found = [h.strip().lower() for h in (hosts or "").split(",") if h.strip()]
         site = next((h for h in found if _REDDIT_HOST_RE.search(h)), found[0] if found else "")
     site = _clean_label(site)
+    if site.startswith("www."):
+        site = site[4:]
 
     guess = ""
     if "webarchive" in low or "web archive" in low:
@@ -640,6 +642,53 @@ def ios_source(types: str, url: str, hosts: str = "", origin: str = "", origin_n
     origin = _clean_label(origin, 120)
     named = _clean_label(origin_name) or IOS_BUNDLES.get(origin.lower(), "") or origin
     return {"source_app": named or _clean_label(app) or guess, "source_title": site}
+
+
+_REDDIT_POST_RE = re.compile(r"https?://(?:[a-z0-9-]+\.)?(?:reddit\.com/(?:r|u|user)/[^/\s]+/(?:comments|s)/[A-Za-z0-9_]+"
+                             r"|redd\.it/[A-Za-z0-9]+)[^\s<>\"']*", re.I)
+_REDDIT_ID_RE = re.compile(r"/comments/([a-z0-9]+)|redd\.it/([a-z0-9]+)", re.I)
+_reddit_titles: dict = {}   # post id -> "r/sub: title", for this server run
+
+
+def _reddit_title(url: str) -> str:
+    """'r/<sub>: <post title>' for a reddit post link, or '' when it can't be read."""
+    # Reddit's .json api answers 403 without a login; the public oEmbed endpoint still gives the title.
+    import urllib.request
+    from urllib.parse import quote
+    key = url.split("?")[0].rstrip("/").lower()
+    m = _REDDIT_ID_RE.search(url)
+    if m:
+        key = (m.group(1) or m.group(2)).lower()
+    if key not in _reddit_titles:
+        req = urllib.request.Request("https://www.reddit.com/oembed?url=" + quote(url, safe=""),
+                                     headers={"User-Agent": "Mozilla/5.0 clippip"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        sub = re.search(r"reddit\.com/r/([A-Za-z0-9_]+)", url + " " + data.get("html", ""))
+        title = data.get("title", "")
+        _reddit_titles[key] = _clean_label((f"r/{sub.group(1)}: " if sub else "") + title, 200) if title else ""
+    return _reddit_titles[key]
+
+
+def reddit_title_later(clip_id, text: str) -> None:
+    """If the clip holds a reddit post link, look up the post title in the background and store it
+    as the clip's source_title. Never blocks the caller, never raises."""
+    m = _REDDIT_POST_RE.search(text or "")
+    if not clip_id or not m:
+        return
+
+    def run():
+        try:
+            title = _reddit_title(m.group(0))
+            if title:
+                with _db_lock, closing(_connect()) as con:
+                    con.execute("UPDATE clips SET source_title = ? WHERE id = ?", (title, int(clip_id)))
+                    con.commit()
+                print(f"[reddit] clip {clip_id}: {title!a}", flush=True)
+        except Exception as exc:
+            print(f"[reddit] title lookup failed for clip {clip_id}: {exc!r}", flush=True)
+
+    threading.Thread(target=run, name="clippip-reddit", daemon=True).start()
 
 
 def content_sha(kind: str, text: str = "", data: bytes = None) -> str:
