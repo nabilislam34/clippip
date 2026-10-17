@@ -14,7 +14,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.9"
+        CFBundleShortVersionString: "2.1"
         UILaunchScreen: {}
         UIBackgroundModes: [audio]
         CFBundleURLTypes:
@@ -38,7 +38,7 @@ targets:
       path: Keyboard/Info.plist
       properties:
         CFBundleDisplayName: ClipPiP
-        CFBundleShortVersionString: "1.9"
+        CFBundleShortVersionString: "2.1"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSExtension:
@@ -66,6 +66,7 @@ targets:
       - path: Sources/RelativeTime.swift
       - path: Sources/TabOrder.swift
       - path: Sources/ClipBatch.swift
+      - path: Sources/AutoActions.swift
       - path: Keyboard
         excludes: ["Info.plist"]
     settings:

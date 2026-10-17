@@ -379,6 +379,11 @@ struct SettingsView: View {
                 .foregroundColor(monitor.pcPaused ? .red : .accentColor)
                 .disabled(monitor.server.isEmpty)
             }
+            Section(header: Text("Auto actions"),
+                    footer: Text("Applied to text you copy (and PC copies put on this phone). Paths, links, filenames and weighted prompts are left alone.")) {
+                Toggle("Danbooru tags: underscores to spaces", isOn: $monitor.autoStripUnderscores)
+                Toggle("Character tags: add 1.5:: weight", isOn: $monitor.autoWeightCharacters)
+            }
             ExclusionSections()
             Section(header: Text("Exclusions page"),
                     footer: Text("The same settings as above, as the PC's page in the browser.")) {

@@ -33,6 +33,9 @@ final class ClipMonitor: ObservableObject {
     @Published var token: String { didSet { UserDefaults.standard.set(token, forKey: "token") } }
     @Published var autoCopy: Bool { didSet { UserDefaults.standard.set(autoCopy, forKey: "autoCopy") } }
     @Published var activateOnPC: Bool { didSet { UserDefaults.standard.set(activateOnPC, forKey: "activateOnPC") } }
+    /// Auto actions on copied text, see AutoActions.
+    @Published var autoStripUnderscores: Bool { didSet { UserDefaults.standard.set(autoStripUnderscores, forKey: "autoStrip") } }
+    @Published var autoWeightCharacters: Bool { didSet { UserDefaults.standard.set(autoWeightCharacters, forKey: "autoWeight") } }
 
     private var timer: Timer?
     private var pollTimer: Timer?
@@ -54,6 +57,9 @@ final class ClipMonitor: ObservableObject {
         token = UserDefaults.standard.string(forKey: "token") ?? ""
         autoCopy = UserDefaults.standard.object(forKey: "autoCopy") as? Bool ?? true
         activateOnPC = UserDefaults.standard.object(forKey: "activateOnPC") as? Bool ?? true
+        autoStripUnderscores = UserDefaults.standard.object(forKey: "autoStrip") as? Bool ?? true
+        autoWeightCharacters = UserDefaults.standard.object(forKey: "autoWeight") as? Bool ?? true
+        if autoWeightCharacters { _ = CharacterTags.shared.tags }   // start loading the list now
         if let data = try? Data(contentsOf: Self.historyURL),
            let saved = try? JSONDecoder().decode([Clip].self, from: data) {
             history = saved
@@ -61,6 +67,13 @@ final class ClipMonitor: ObservableObject {
         // Coming back to ClipPiP itself means the app a Shortcuts automation reported is no longer in front.
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil,
                                                queue: .main) { _ in ClipOrigin.clearCurrentApp("") }
+    }
+
+    /// The copied text after the switched-on auto actions.
+    func autoFixed(_ text: String) -> String {
+        guard autoStripUnderscores || autoWeightCharacters else { return text }
+        let chars = autoWeightCharacters ? (CharacterTags.shared.tags ?? []) : []
+        return AutoActions.apply(text, chars: chars, strip: autoStripUnderscores, weight: autoWeightCharacters)
     }
 
     func start() {
@@ -158,7 +171,14 @@ final class ClipMonitor: ObservableObject {
         let copiedAt = Self.nowMs()
         let types = pb.types.joined(separator: ",")
         let hints = ClipOrigin.headers(for: pb)
-        if pb.hasStrings, let s = pb.string, !s.isEmpty {
+        if pb.hasStrings, var s = pb.string, !s.isEmpty {
+            // types, hints and link are read above: replacing the string drops the copy's other types
+            let fixed = autoFixed(s)
+            if fixed != s {
+                pb.string = fixed
+                lastChange = pb.changeCount
+                s = fixed
+            }
             let body = "text=" + Self.encode(s)
             send(Data(body.utf8), type: "application/x-www-form-urlencoded", label: s, kind: "text",
                  link: Self.sourceURL(pb), types: types, hints: hints, copiedAt: copiedAt)
@@ -334,7 +354,7 @@ final class ClipMonitor: ObservableObject {
         } else if let text = r.text, !text.isEmpty {
             // The server never sends back what this phone copied, so everything here is a real PC copy.
             record(text, "from PC", fromPC: true, serverId: r.id)
-            if autoCopy { copyText(text, quiet: true) }
+            if autoCopy { copyText(autoFixed(text), quiet: true) }   // phone only, never sent back
         }
     }
 
