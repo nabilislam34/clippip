@@ -229,6 +229,21 @@ final class LibraryModel: ObservableObject {
         }
     }
 
+    /// Writes the clip's CopyQ tags. A phone/PC history clip is added to the CopyQ "phone" tab with them.
+    func setTags(_ item: LibItem, to tags: [String]) {
+        monitor?.post("/lib/tags/set", json: ["key": item.key, "sig": item.sig ?? "", "tags": tags]) { [weak self] ok, msg in
+            guard let self = self else { return }
+            if ok {
+                self.monitor?.flash(tags.isEmpty ? "Tags removed" : "Tagged")
+                self.loadTags()
+            } else {
+                self.monitor?.flash(msg == "changed" ? "That clip changed on the PC, list refreshed"
+                                    : (msg.isEmpty ? "Tagging failed" : msg))
+            }
+            self.reload(refresh: true)
+        }
+    }
+
     /// `pinned` is called when CopyQ refused because the clip is pinned there.
     func delete(_ item: LibItem, force: Bool, pinned: @escaping () -> Void) {
         monitor?.post("/lib/delete", json: ["key": item.key, "sig": item.sig ?? "", "force": force]) { [weak self] ok, msg in
@@ -303,6 +318,7 @@ struct ClipMenu: ViewModifier {
     let onCopy: () -> Void
     let onOpen: () -> Void
     var onRename: (() -> Void)? = nil
+    var onTags: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
     var blockLabel: String = ""
     var onBlock: (() -> Void)? = nil
@@ -340,6 +356,9 @@ struct ClipMenu: ViewModifier {
         }
         if let onRename = onRename {
             Button(action: onRename) { Label("Rename", systemImage: "pencil") }
+        }
+        if let onTags = onTags {
+            Button(action: onTags) { Label("Edit tags", systemImage: "tag") }
         }
         if let onBlock = onBlock {
             Button(action: onBlock) { Label(blockLabel, systemImage: "nosign") }
@@ -382,6 +401,7 @@ struct ClipRow: View {
     let onCopy: () -> Void
     let onOpen: () -> Void
     var onRename: (() -> Void)? = nil
+    var onTags: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
     var blockLabel: String = ""
     var onBlock: (() -> Void)? = nil
@@ -423,7 +443,7 @@ struct ClipRow: View {
         }
         .buttonStyle(.plain)
         .modifier(ClipMenu(text: text, image: isImage ? full : nil, onCopy: onCopy, onOpen: onOpen,
-                           onRename: onRename, onDelete: onDelete, blockLabel: blockLabel, onBlock: onBlock,
+                           onRename: onRename, onTags: onTags, onDelete: onDelete, blockLabel: blockLabel, onBlock: onBlock,
                            onTransform: onTransform, onQuick: onQuick, pinned: pinned, onPin: onPin))
     }
 }
@@ -533,6 +553,55 @@ struct FullClipSheet: View {
     }
 }
 
+/// Edit a clip's CopyQ tags: comma separated, or tap a known tag to add it.
+struct TagsSheet: View {
+    let item: LibItem
+    let known: [String]
+    let save: ([String]) -> Void
+    @State private var text: String
+    @Environment(\.dismiss) private var dismiss
+
+    init(item: LibItem, known: [String], save: @escaping ([String]) -> Void) {
+        self.item = item
+        self.known = known
+        self.save = save
+        _text = State(initialValue: (item.tags ?? []).joined(separator: ", "))
+    }
+
+    private var current: [String] {
+        text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Tags"),
+                        footer: Text("Comma separated. Saved to CopyQ; phone clips go to the CopyQ \"phone\" tab. Search with #tag.")) {
+                    TextField("tag1, tag2", text: $text).disableAutocorrection(true).autocapitalization(.none)
+                }
+                let add = known.filter { k in !current.contains { $0.lowercased() == k.lowercased() } }.prefix(40)
+                if !add.isEmpty {
+                    Section(header: Text("Add")) {
+                        ForEach(Array(add), id: \.self) { k in
+                            Button("#" + k) { text = (current + [k]).joined(separator: ", ") }
+                        }
+                    }
+                }
+                Section(header: Text("Clip")) {
+                    Text(String(item.text.prefix(300))).font(.footnote).foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("Tags")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save(current); dismiss() } }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+}
+
 struct RenameSheet: View {
     let item: LibItem
     let save: (String) -> Void
@@ -572,6 +641,7 @@ struct LibraryView: View {
     @ObservedObject private var pins = PinStore.shared
     @State private var open: OpenClip?
     @State private var renaming: LibItem?
+    @State private var tagging: LibItem?
     @State private var ask: DeleteAsk?
     @State private var editing: EditedText?
     @State private var dropTarget: String?
@@ -729,6 +799,9 @@ struct LibraryView: View {
                 .sheet(item: $renaming) { item in
                     RenameSheet(item: item) { lib.rename(item, to: $0) }
                 }
+                .background(EmptyView().sheet(item: $tagging) { item in
+                    TagsSheet(item: item, known: lib.tags.map { $0.tag }) { lib.setTags(item, to: $0) }
+                })
             }
             if selecting {
                 SelectionBar(count: picked.count,
@@ -787,6 +860,8 @@ struct LibraryView: View {
                                            image: isImage ? full : nil, copy: copy)
                        },
                        onRename: { renaming = item },
+                       // Ditto is read only; history images have no CopyQ copy to carry tags
+                       onTags: item.key.hasPrefix("d") || (isImage && item.key.hasPrefix("h")) ? nil : { tagging = item },
                        onDelete: { ask = DeleteAsk(item: item, force: false) },
                        blockLabel: "Block clips from \(item.src ?? "")",
                        onBlock: (item.src ?? "").isEmpty ? nil : { lib.blockSource(of: item) },

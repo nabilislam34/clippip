@@ -435,7 +435,7 @@ class Handler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
 
         post_path = urlparse(self.path).path
-        if post_path in ("/lib/rename", "/lib/delete", "/lib/activate", "/lib/block", "/lib/file"):
+        if post_path in ("/lib/rename", "/lib/delete", "/lib/activate", "/lib/block", "/lib/file", "/lib/tags/set"):
             self._lib_edit(post_path, raw_bytes)
             return
 
@@ -749,6 +749,11 @@ class Handler(BaseHTTPRequestHandler):
             key, sig = str(req["key"]), str(req.get("sig", ""))
             if path == "/lib/rename":
                 store.lib_rename(key, sig, str(req.get("name", "")))
+            elif path == "/lib/tags/set":
+                saved = store.lib_set_tags(key, sig, list(req.get("tags") or []))
+                print(f"[lib] {path} key={key!r} tags={saved!a}")
+                reply(200, {"ok": True, "tags": saved})
+                return
             elif path == "/lib/block":
                 reply(200, {"ok": True, "blocked": store.block_source_of(key)})
                 return

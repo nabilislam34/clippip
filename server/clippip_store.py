@@ -40,6 +40,7 @@ MAX_IMAGE_BYTES = 30 * 1024 * 1024
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 COPYQ_TTL = 120          # seconds a cached CopyQ tab is served before a background refresh
 HISTORY_TAB = "history"
+PHONE_TAB = "phone"          # CopyQ tab that phone clips land in when they get tagged on the phone
 CLIPBOARD_MANAGERS = ("copyq.exe", "ditto.exe", "powershell.exe", "pwsh.exe")
 
 DEFAULT_CONFIG = {
@@ -854,11 +855,13 @@ def history_items(query: str = "", offset: int = 0, limit: int = 100, kind: str 
         rows = con.execute(
             "SELECT id, ts, direction, kind, text, bytes, source_app, source_title, source_url, name FROM clips"
             + clause + " ORDER BY id DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+    phone_tags = _phone_tab_tags() if rows else {}
     items = []
     for cid, ts, direction, kind_, text, size, app, title, url, name in rows:
         src = " | ".join(x for x in ("iPhone" if direction == "ios_to_pc" else "", app, title) if x)
         item = {"key": f"h{cid}", "kind": kind_, "text": text or f"[image {int((size or 0) / 1024)} KB]",
-                "name": name or "", "note": f"{ts}  {src}".strip(), "tags": [], "url": url or "", "sig": "",
+                "name": name or "", "note": f"{ts}  {src}".strip(), "tags": phone_tags.get(text or "", []) if kind_ == "text" else [],
+                "url": url or "", "sig": "",
                 "src": (app or "") if direction == "pc_to_ios" else ""}
         if kind_ == "image":
             item["img"] = f"/clip/file?id={cid}"
@@ -1274,6 +1277,10 @@ if (want.row >= size() || clean(mimeText, want.row) !== want.t || clean(mimeItem
   if (want.name === '') { change(want.row, mimeItemNotes, undefined); }
   else { change(want.row, mimeItemNotes, want.name); }
   print('OK');
+} else if (want.op === 'tags') {
+  if (want.name === '') { change(want.row, 'application/x-copyq-tags', undefined); }
+  else { change(want.row, 'application/x-copyq-tags', want.name); }
+  print('OK');
 } else if (want.op === 'delete') {
   var before = size();
   if (want.force) { try { plugins.itempinned.unpin(want.row); } catch (e) {} }
@@ -1388,6 +1395,58 @@ def lib_rename(key: str, sig: str, name: str) -> None:
         return
     _copyq_apply(tab, ident, sig, "rename", name)
     _copyq_tab_items(tab, force=True)
+
+
+def _phone_tab_tags() -> dict:
+    """text -> tags of the clips in the CopyQ phone tab (a phone clip shows the tags of its copy there)."""
+    try:
+        return {it["t"]: it["tags"] for it in _copyq_tab_items(PHONE_TAB) if it["tags"]}
+    except Exception:
+        return {}
+
+
+_COPYQ_ADD_TAGGED = r"""
+var want = %s;
+tab(want.tab);
+write(0, mimeText, want.t, 'application/x-copyq-tags', want.tags);
+print('OK');
+"""
+
+
+def lib_set_tags(key: str, sig: str, tags) -> list:
+    """Set a clip's CopyQ tags (the phone's tag editor). A phone/PC history clip is put into the CopyQ
+    phone tab first (or its existing copy there is updated). Returns the tags as saved."""
+    clean = []
+    for t in tags:
+        t = " ".join(str(t).replace(",", " ").split())[:60]
+        if t and t.lower() not in [x.lower() for x in clean]:
+            clean.append(t)
+    joined = ",".join(clean)
+    tab, ident = _parse_key(key)
+    if tab.startswith("ditto:"):
+        raise ClipEditError("the Ditto library is read only")
+    if tab == HISTORY_TAB:
+        with _db_lock, closing(_connect()) as con:
+            row = con.execute("SELECT kind, text FROM clips WHERE id = ? AND deleted_at IS NULL", (ident,)).fetchone()
+        if not row:
+            raise KeyError(key)
+        if row[0] != "text" or not (row[1] or "").strip():
+            raise ClipEditError("only text clips can be tagged")
+        text = row[1]
+        same = [it for it in _copyq_tab_items(PHONE_TAB, force=True) if it["t"] == text]
+        if same:
+            _copyq_apply(PHONE_TAB, same[0]["row"], same[0]["sig"], "tags", joined)
+        elif clean:
+            script = _COPYQ_ADD_TAGGED % json.dumps({"tab": PHONE_TAB, "t": text, "tags": joined})
+            res = subprocess.run([COPYQ_EXE, "eval", "-"], input=script.encode("utf-8"), capture_output=True,
+                                 timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+            if res.returncode != 0 or res.stdout.decode("utf-8", errors="replace").strip() != "OK":
+                raise ClipEditError("failed: " + res.stderr.decode("utf-8", errors="replace").strip()[:200])
+        _copyq_tab_items(PHONE_TAB, force=True)
+        return clean
+    _copyq_apply(tab, ident, sig, "tags", joined)
+    _copyq_tab_items(tab, force=True)
+    return clean
 
 
 def lib_delete(key: str, sig: str, force: bool = False) -> None:
