@@ -770,6 +770,19 @@ def _terms(query: str):
     return [t for t in (query or "").lower().split() if t]
 
 
+def _item_hit(it: dict, terms) -> bool:
+    """Every term must match. `#word` matches part of a tag only; other words match text, name or tags."""
+    tags = [x.lower() for x in it["tags"]]
+    hay = (it["text"] + "\n" + it["name"] + "\n" + ",".join(tags)).lower()
+    for term in terms:
+        if term.startswith("#") and len(term) > 1:
+            if not any(term[1:] in t for t in tags):
+                return False
+        elif term not in hay:
+            return False
+    return True
+
+
 _SEARCH_COLS = ("text", "name", "source_app", "source_title", "source_url")
 
 
@@ -1193,10 +1206,8 @@ def lib_items(tab: str, query: str = "", offset: int = 0, limit: int = 100, forc
                 continue
             if tag and tag not in [x.lower() for x in it["tags"]]:
                 continue
-            if terms:
-                hay = (it["text"] + "\n" + it["name"] + "\n" + ",".join(it["tags"])).lower()
-                if not all(term in hay for term in terms):
-                    continue
+            if terms and not _item_hit(it, terms):
+                continue
             matched.append((name, it))
     items = []
     for name, it in matched[offset:offset + limit]:
@@ -1219,10 +1230,8 @@ def _ditto_items(gid: int, query: str, offset: int, limit: int, force: bool, tag
             continue
         if tag and tag not in [x.lower() for x in it["tags"]]:
             continue
-        if terms:
-            hay = (it["text"] + "\n" + it["name"] + "\n" + ",".join(it["tags"])).lower()
-            if not all(term in hay for term in terms):
-                continue
+        if terms and not _item_hit(it, terms):
+            continue
         matched.append(it)
     items = [{"key": f"d{gid}#{it['row']}", "kind": "text", "text": it["text"], "name": it["name"],
               "note": "", "tags": it["tags"], "url": "", "sig": it["sig"]}
