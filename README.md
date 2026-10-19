@@ -3,7 +3,9 @@
 Seamless iOS to windows clipboard sync that stays in the background with Picture-in-Picture and shares every copy you make to a server on your PC. Everything is local between your devices so no security/privacy concerns
 
 
-<img width="550" height="1024" alt="image" src="https://github.com/user-attachments/assets/57090030-df87-403c-826c-3bc3c609c0c7" />
+<img width="1536" height="2752" alt="image" src="https://github.com/user-attachments/assets/fb9690ca-0317-4a0f-91b8-ce6cfc4516f8" />  <img width="1536" height="2752" alt="image" src="https://github.com/user-attachments/assets/7384ca22-e951-4f0e-ba7b-bfe106bace00" />
+
+
 
 
 - Phone to PC: every copy on the phone is sent to a server on your PC (text and images). Images clips can be stored on your laptop to save on phone storage.
